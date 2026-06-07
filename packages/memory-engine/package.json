@@ -1,0 +1,24 @@
+{
+  "name": "@ghost-persona/memory-engine",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ghost-persona/shared": "*",
+    "@ghost-persona/file-watcher": "*",
+    "@ghost-persona/context-processor": "*",
+    "@ghost-persona/markdown-generator": "*",
+    "@ghost-persona/encryption": "*",
+    "sql.js": "^1.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0",
+    "@types/sql.js": "^1.4.9"
+  }
+}

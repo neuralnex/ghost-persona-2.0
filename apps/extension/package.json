@@ -1,0 +1,148 @@
+{
+  "name": "ghost-persona",
+  "displayName": "Ghost Persona",
+  "description": "AI coding agent memory \u2014 continuous project context tracking",
+  "version": "0.1.0",
+  "publisher": "ghost-persona",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "AI",
+    "context",
+    "memory",
+    "coding agent",
+    "cursor",
+    "claude"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ghost.init",
+        "title": "Ghost: Initialize Project"
+      },
+      {
+        "command": "ghost.watch",
+        "title": "Ghost: Start Watching"
+      },
+      {
+        "command": "ghost.stopWatch",
+        "title": "Ghost: Stop Watching"
+      },
+      {
+        "command": "ghost.generateContext",
+        "title": "Ghost: Generate Context"
+      },
+      {
+        "command": "ghost.viewMemory",
+        "title": "Ghost: View Memory"
+      },
+      {
+        "command": "ghost.encryptVault",
+        "title": "Ghost: Encrypt Vault"
+      },
+      {
+        "command": "ghost.restoreVault",
+        "title": "Ghost: Restore Vault"
+      },
+      {
+        "command": "ghost.generateAgentBrief",
+        "title": "Ghost: Generate Agent Brief"
+      },
+      {
+        "command": "ghost.createSnapshot",
+        "title": "Ghost: Create Snapshot"
+      },
+      {
+        "command": "ghost.search",
+        "title": "Ghost: Search Memory"
+      },
+      {
+        "command": "ghost.refreshMemory",
+        "title": "Ghost: Refresh Memory View",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ghost-persona",
+          "title": "Ghost Persona",
+          "icon": "resources/ghost-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "ghost-persona": [
+        {
+          "id": "ghost.memoryView",
+          "name": "Project Memory"
+        },
+        {
+          "id": "ghost.decisionsView",
+          "name": "Recent Decisions"
+        },
+        {
+          "id": "ghost.currentWorkView",
+          "name": "Current Work"
+        },
+        {
+          "id": "ghost.snapshotsView",
+          "name": "Snapshots"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Ghost Persona",
+      "properties": {
+        "ghost.summarization": {
+          "type": "string",
+          "enum": [
+            "rule-based",
+            "llm"
+          ],
+          "default": "rule-based",
+          "description": "Summarization mode for file changes"
+        },
+        "ghost.llmApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Gemini API key for LLM summarization"
+        },
+        "ghost.apiPort": {
+          "type": "number",
+          "default": 7337,
+          "description": "Port for Ghost Persona API server"
+        },
+        "ghost.autoWatch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start watching on project open"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "@ghost-persona/shared": "*",
+    "@ghost-persona/memory-engine": "*",
+    "@ghost-persona/encryption": "*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

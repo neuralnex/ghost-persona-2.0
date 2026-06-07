@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts.map
+coverage/
+.env
+.env.local
+
+# Ghost Persona — never commit unencrypted memory
+.ghost/
+
+# Commit the encrypted vault instead
+# ghost.vault  ← include this in your repo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
