@@ -1,0 +1,19 @@
+{
+  "name": "@ghost-persona/git-history",
+  "version": "0.1.0",
+  "description": "Extract decisions and context from git history",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ghost-persona/shared": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

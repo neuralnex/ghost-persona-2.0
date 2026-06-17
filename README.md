@@ -121,6 +121,20 @@ ghost watch
 
 Ghost will now silently track every file change and update your `.ghost/` memory automatically.
 
+### Enable LLM Summarization (Optional)
+
+To use **Gemini 2.5 Flash** for richer, context-aware file change summaries:
+
+```bash
+# Set your API key as environment variable (recommended)
+export GEMINI_API_KEY="your-api-key-from-google-ai-studio"
+ghost watch
+
+# OR set it in config.json
+ghost init  # if not already initialized
+# Then edit .ghost/config.json and add:
+```
+
 ### Generate an AI briefing
 
 ```bash
@@ -142,11 +156,17 @@ Paste this into any AI agent (Claude, Cursor, Aider, Windsurf, etc.) and it imme
 | `ghost watch` | Start tracking file changes |
 | `ghost snapshot` | Create a point-in-time memory snapshot |
 | `ghost brief` | Generate an AI-ready briefing |
-| `ghost search <query>` | Search project memory |
+| `ghost search <query>` | Keyword search project memory |
+| `ghost semantic-search <query>` | Semantic search using vector embeddings |
+| `ghost query <question>` | Ask natural language questions |
+| `ghost changes` | Show changes for a time period |
 | `ghost encrypt` | Encrypt `.ghost/` into `ghost.vault` |
 | `ghost decrypt` | Decrypt `ghost.vault` → `.ghost/` |
 | `ghost sync` | Encrypt + commit + push to Git |
 | `ghost restore` | Pull + decrypt vault |
+| `ghost tech-stack` | Detect and display project technology stack |
+| `ghost git-decisions` | Extract decisions from git commit history |
+| `ghost hooks` | Manage Git commit hooks for auto-tracking |
 
 ### Examples
 
@@ -165,6 +185,74 @@ ghost sync --remote origin --branch main -m "ghost: weekly memory sync"
 
 # Restore on a new machine
 ghost restore --remote origin
+
+# v0.2 Features - Intelligence
+# Detect project technology stack
+ghost tech-stack
+
+# Detect tech stack and output as JSON
+ghost tech-stack --json
+
+# Extract architectural decisions from git history
+ghost git-decisions
+
+# Extract decisions from last 100 commits
+ghost git-decisions --limit 100
+
+# Manage git hooks for automatic tracking
+ghost hooks
+```
+
+---
+
+## v0.2 Features: Intelligence Layer
+
+Ghost Persona v0.2 introduces intelligent features that automatically enhance your project memory:
+
+### Auto-Detect Tech Stack
+
+Ghost automatically scans your project for configuration files and dependencies to detect:
+- **Languages**: JavaScript/TypeScript, Python, Go, Rust, Java, PHP, Ruby, etc.
+- **Frameworks**: Express, Fastify, Next.js, Django, Flask, React, Vue, Angular, etc.
+- **Databases**: PostgreSQL, MySQL, MongoDB, Redis, Prisma, TypeORM, etc.
+- **Tools**: Testing frameworks, linters, formatters, cloud providers, CI/CD, etc.
+
+The detected tech stack is automatically added to `architecture.md` and included in AI briefings.
+
+### Git History → Decisions Extraction
+
+Ghost analyzes your git commit history to extract architectural decisions. It looks for:
+- Commit messages with keywords: `decide`, `decided`, `decision`, `choose`, `chose`, `migrate`, `switch`, etc.
+- Migration patterns: "switch from JWT to Clerk", "migrate to TypeScript", etc.
+- Rationales and context in commit messages
+
+Extracted decisions are added to `decisions.md` with proper formatting.
+
+### Git Commit Hooks
+
+Automate your memory tracking with git hooks:
+
+**Pre-commit Hook** (`ghost hooks` → option 1):
+- Automatically creates a memory snapshot before each commit
+- Uses the commit message as context for the snapshot
+- Only triggers for actual code changes (skips docs, configs, etc.)
+
+**Post-commit Hook** (`ghost hooks` → option 2):
+- Automatically encrypts and syncs your vault to Git after commit
+- Requires a password (stored securely in the hook script)
+- Only triggers when ghost.vault is committed
+
+### Usage
+
+```bash
+# Manually trigger tech stack detection
+ghost tech-stack
+
+# Extract decisions from git history
+ghost git-decisions
+
+# Set up automatic tracking with git hooks
+ghost hooks
 ```
 
 ---
@@ -382,7 +470,7 @@ Snapshots are saved in `.ghost/snapshots/` as individual Markdown files.
   "debounceMs": 1500,
   "summarization": "rule-based",
   "llmApiKey": "",
-  "llmModel": "gemini-1.5-flash",
+  "llmModel": "gemini-2.5-flash",
   "encryptionEnabled": false,
   "syncEnabled": false,
   "apiPort": 7337
@@ -397,9 +485,51 @@ For richer, context-aware summaries, switch to Gemini:
 {
   "summarization": "llm",
   "llmApiKey": "your-gemini-api-key",
-  "llmModel": "gemini-1.5-flash"
+  "llmModel": "gemini-2.5-flash"
 }
 ```
+
+#### Getting Your Gemini API Key
+
+1. **Go to [Google AI Studio](https://aistudio.google.com/)**
+2. **Sign in** with your Google account
+3. **Get API Key**: Navigate to "API Keys" section
+4. **Create a new key** or use an existing one
+5. **Copy the key** and add it to your `config.json`
+
+#### Environment Variable Support
+
+You can also set your API key via environment variables:
+
+```bash
+# Option 1: Direct environment variable
+export GEMINI_API_KEY="your-api-key-here"
+
+# Option 2: Ghost-specific variable
+export GHOST_LLM_API_KEY="your-api-key-here"
+
+# Then run Ghost
+ghost watch
+```
+
+> **Note**: Environment variables take precedence over config file settings.
+
+#### Troubleshooting API Key Issues
+
+**Problem: API calls failing with authentication errors**
+- Verify your API key is correct
+- Check if you have billing enabled on your Google Cloud project
+- Ensure the key has the "AI Studio API" enabled
+
+**Problem: LLM summarization not working**
+- Verify `summarization` is set to `"llm"` in config.json
+- Check that your API key is valid
+- Test with environment variable: `GEMINI_API_KEY=your-key ghost watch`
+
+**Problem: Falling back to rule-based mode**
+- This is expected if no API key is provided
+- Also happens if the API returns an error
+- Check your network connection and API key validity
 
 ---
 
@@ -446,7 +576,7 @@ npm test
 
 ## Roadmap
 
-### v0.1 — Core (this release)
+### v0.1 — Core
 
 - [x] File change tracking (Chokidar)
 - [x] Rule-based context processor
@@ -458,18 +588,89 @@ npm test
 - [x] CLI (10 commands)
 - [x] VS Code extension
 
-### v0.2 — Intelligence
+### v0.2 — Intelligence ✅ **NEW**
 
-- [ ] LLM summarization (Gemini) — fully tested
+- [x] **LLM summarization (Gemini 2.5 Flash)** — Implemented with environment variable support (`GEMINI_API_KEY` or `GHOST_LLM_API_KEY`)
 - [ ] Git commit hook integration
-- [ ] `git log` → decisions extraction
-- [ ] Auto-detect tech stack from package.json / pyproject.toml
+- [x] `git log` → decisions extraction — Automatically extracts architectural decisions from commit history
+- [x] Auto-detect tech stack from package.json / pyproject.toml — Built into initialization flow
 
-### v0.3 — Search
+### v0.3 — Search ✅ **NEW**
 
-- [ ] Qdrant vector search integration
-- [ ] Semantic similarity across memory files
-- [ ] "What changed last week?" natural language queries
+- [x] **Qdrant vector search integration** — Full vector database support with configurable Qdrant server
+- [x] **Semantic similarity across memory files** — Find related content beyond keyword matching
+- [x] **"What changed last week?" natural language queries** — Temporal query processing with automatic date range detection
+
+#### Search CLI Commands
+
+```bash
+# Basic keyword search (v0.1)
+ghost search "authentication"
+
+# Semantic search using vector embeddings
+ghost semantic-search "authentication implementation"
+ghost ss "authentication implementation"  # alias
+
+# Natural language queries
+ghost query "What changed last week?"
+ghost query "Why did we choose Clerk for authentication?"
+ghost query "How does the database connection work?"
+
+# Temporal change queries
+ghost changes --week           # Last 7 days
+ghost changes --yesterday     # Yesterday
+ghost changes --today         # Today
+ghost changes --month         # This month
+ghost changes --last-month    # Last month
+ghost changes --days 30       # Last 30 days
+```
+
+#### Search API Endpoints
+
+```bash
+# Basic search
+GET /search?q=authentication
+
+# Semantic search
+GET /search/semantic?q=authentication&limit=10&min_score=0.5&type=decision
+
+# Natural language query
+GET /search/query?q=What changed last week?
+
+# Temporal queries
+GET /changes/last-week
+GET /changes/yesterday
+GET /changes/today
+```
+
+#### Setting Up Vector Search
+
+To enable semantic search (v0.3), you need to:
+
+1. **Run Qdrant server** (vector database):
+   ```bash
+   # Using Docker (recommended)
+   docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+   
+   # Or install locally
+   # See: https://qdrant.tech/documentation/guides/installation/
+   ```
+
+2. **Enable vector search in config.json**:
+   ```json
+   {
+     "vectorSearchEnabled": true,
+     "qdrantUrl": "http://localhost:6333",
+     "embeddingModel": "text-embedding-ada-002"
+   }
+   ```
+
+3. **Set your embedding API key** (optional):
+   ```bash
+   export EMBEDDING_API_KEY="your-openai-or-vertex-ai-key"
+   ```
+
+> **Note**: Without vector search enabled, Ghost falls back to keyword-based search.
 
 ### v0.4 — Cloud
 

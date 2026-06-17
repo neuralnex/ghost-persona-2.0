@@ -11,6 +11,12 @@ import { restoreCommand } from './commands/restore.js';
 import { briefCommand } from './commands/brief.js';
 import { watchCommand } from './commands/watch.js';
 import { searchCommand } from './commands/search.js';
+import { semanticSearchCommand } from './commands/semantic-search.js';
+import { queryCommand } from './commands/query.js';
+import { changesCommand } from './commands/changes.js';
+import { techStackCommand } from './commands/tech-stack.js';
+import { gitDecisionsCommand } from './commands/git-decisions.js';
+import { hooksCommand } from './commands/hooks.js';
 import chalk from 'chalk';
 
 const program = new Command();
@@ -22,7 +28,7 @@ program
       ' — AI coding agent memory system\n' +
       chalk.dim('  The codebase evolves. The documentation evolves automatically. The AI remembers.')
   )
-  .version('0.1.0');
+  .version('0.3.0');
 
 program.addCommand(initCommand());
 program.addCommand(statusCommand());
@@ -35,5 +41,11 @@ program.addCommand(syncCommand());
 program.addCommand(restoreCommand());
 program.addCommand(briefCommand());
 program.addCommand(searchCommand());
+program.addCommand(semanticSearchCommand());
+program.addCommand(queryCommand());
+program.addCommand(changesCommand());
+program.addCommand(techStackCommand());
+program.addCommand(gitDecisionsCommand());
+program.addCommand(hooksCommand());
 
 program.parse(process.argv);

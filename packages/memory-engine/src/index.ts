@@ -12,12 +12,18 @@ import {
   ok,
   err,
   Result,
+  ArchitecturalDecision,
+  MemoryFileName,
 } from '@ghost-persona/shared';
 import { FileWatcher } from '@ghost-persona/file-watcher';
 import { createSummarizer, Summarizer, ProcessedContext } from '@ghost-persona/context-processor';
 import { MarkdownGenerator } from '@ghost-persona/markdown-generator';
 import { EncryptionService } from '@ghost-persona/encryption';
 import { MetadataStore } from './db.js';
+import { TechStackDetector, detectTechStack, DetectionResult, TechStack } from '@ghost-persona/tech-stack-detector';
+import { GitHistoryAnalyzer, extractGitDecisions, CommitAnalysis } from '@ghost-persona/git-history';
+import { NLQueryProcessor } from '@ghost-persona/natural-language-queries';
+import { SemanticSearchResult } from '@ghost-persona/semantic-search';
 import { randomUUID } from 'crypto';
 
 export interface MemoryEngineEvents {
@@ -34,19 +40,40 @@ export class MemoryEngine extends EventEmitter {
   private summarizer: Summarizer;
   private generator: MarkdownGenerator;
   private encryption: EncryptionService;
+  private techStackDetector: TechStackDetector;
+  private gitHistoryAnalyzer: GitHistoryAnalyzer;
+  private nlQueryProcessor: NLQueryProcessor;
+  private techStack: DetectionResult | null = null;
+  private gitDecisions: ArchitecturalDecision[] = [];
   private initialized = false;
   private recentContexts: ProcessedContext[] = [];
 
   constructor(config: GhostConfig) {
     super();
     this.config = config;
+    
+    // Support environment variables for API key (GHOST_LLM_API_KEY or GEMINI_API_KEY)
+    const apiKey = process.env.GHOST_LLM_API_KEY 
+      || process.env.GEMINI_API_KEY 
+      || config.llmApiKey;
+    const model = process.env.GEMINI_MODEL || config.llmModel || 'gemini-2.5-flash';
+    
     this.summarizer = createSummarizer(
       config.summarization,
-      config.llmApiKey,
-      config.llmModel
+      apiKey,
+      model
     );
     this.generator = new MarkdownGenerator(config);
     this.encryption = new EncryptionService(config.projectRoot);
+    this.techStackDetector = new TechStackDetector(config.projectRoot);
+    this.gitHistoryAnalyzer = new GitHistoryAnalyzer(config.projectRoot);
+    this.nlQueryProcessor = new NLQueryProcessor({
+      ghostDir: config.ghostDir,
+      enabled: config.vectorSearchEnabled,
+      qdrantUrl: config.qdrantUrl,
+      embeddingApiKey: config.embeddingApiKey,
+      embeddingModel: config.embeddingModel,
+    });
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -64,9 +91,37 @@ export class MemoryEngine extends EventEmitter {
       this.store.upsertMetadata({
         initialized: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
-        version: '0.1.0',
+        version: '0.2.0',
         projectRoot: this.config.projectRoot,
       });
+
+      // Auto-detect tech stack
+      try {
+        this.techStack = await this.techStackDetector.detect();
+        await this.updateArchitectureWithTechStack();
+      } catch {
+        // Tech stack detection failed - continue without it
+        this.techStack = null;
+      }
+
+      // Extract decisions from git history
+      try {
+        if (await this.gitHistoryAnalyzer.isGitRepo()) {
+          this.gitDecisions = await this.gitHistoryAnalyzer.extractDecisions(50);
+          await this.updateDecisionsFromGitHistory();
+        }
+      } catch {
+        // Git history extraction failed - continue without it
+        this.gitDecisions = [];
+      }
+
+      // Initialize NL query processor (v0.3)
+      try {
+        await this.nlQueryProcessor.initialize();
+      } catch {
+        // NL query processor failed - continue without it
+        console.warn('Natural language query processor failed to initialize');
+      }
 
       this.initialized = true;
       this.emit('initialized');
@@ -162,7 +217,7 @@ export class MemoryEngine extends EventEmitter {
         currentGoal: options?.currentGoal ?? 'Active development',
         knownIssues: options?.knownIssues ?? [],
         nextTasks: options?.nextTasks ?? [],
-        memorySnapshot: memorySnapshot as Record<import('@ghost-persona/shared').MemoryFileName, string>,
+        memorySnapshot: memorySnapshot as Record<MemoryFileName, string>,
       };
 
       await this.generator.createSnapshot(snapshot);
@@ -196,6 +251,63 @@ export class MemoryEngine extends EventEmitter {
     return results.slice(0, 10);
   }
 
+  // ─── Semantic Search (v0.3) ───────────────────────────────────────────────
+
+  /**
+   * Perform a semantic search using vector embeddings
+   */
+  async semanticSearch(
+    query: string,
+    options?: { limit?: number; minScore?: number; type?: string }
+  ): Promise<Result<SemanticSearchResult>> {
+    return this.nlQueryProcessor.search(query, options);
+  }
+
+  /**
+   * Process a natural language query like "What changed last week?"
+   */
+  async queryNaturalLanguage(
+    query: string,
+    options?: { limit?: number }
+  ): Promise<Result<{ parsed: any; searchResult?: SemanticSearchResult }>> {
+    return this.nlQueryProcessor.process(query);
+  }
+
+  /**
+   * Convenience method: What changed last week?
+   */
+  async whatChangedLastWeek(): Promise<Result<SemanticSearchResult>> {
+    return this.nlQueryProcessor.whatChangedLastWeek();
+  }
+
+  /**
+   * Convenience method: What changed yesterday?
+   */
+  async whatChangedYesterday(): Promise<Result<SemanticSearchResult>> {
+    return this.nlQueryProcessor.whatChangedYesterday();
+  }
+
+  /**
+   * Convenience method: What changed today?
+   */
+  async whatChangedToday(): Promise<Result<SemanticSearchResult>> {
+    return this.nlQueryProcessor.whatChangedToday();
+  }
+
+  /**
+   * Convenience method: What changed this month?
+   */
+  async whatChangedThisMonth(): Promise<Result<SemanticSearchResult>> {
+    return this.nlQueryProcessor.whatChangedThisMonth();
+  }
+
+  /**
+   * Find similar decisions
+   */
+  async findSimilarDecisions(query: string): Promise<Result<SemanticSearchResult>> {
+    return this.nlQueryProcessor.findDecisions(query);
+  }
+
   async generateBrief(): Promise<string> {
     return this.generator.generateBrief();
   }
@@ -224,6 +336,227 @@ export class MemoryEngine extends EventEmitter {
     }
   }
 
+  // ─── Tech Stack Detection ─────────────────────────────────────────────────
+
+  async detectTechStack(): Promise<Result<DetectionResult>> {
+    try {
+      this.techStack = await this.techStackDetector.detect();
+      await this.updateArchitectureWithTechStack();
+      return ok(this.techStack);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  async getTechStack(): Promise<DetectionResult | null> {
+    if (!this.techStack) {
+      try {
+        this.techStack = await this.techStackDetector.detect();
+        await this.updateArchitectureWithTechStack();
+      } catch {
+        return null;
+      }
+    }
+    return this.techStack;
+  }
+
+  /**
+   * Update architecture.md with detected tech stack
+   */
+  private async updateArchitectureWithTechStack(): Promise<void> {
+    if (!this.techStack) return;
+
+    try {
+      const techStack = this.techStack.techStack;
+      let content = await this.generator.readFile('architecture.md');
+
+      // Update Tech Stack section
+      const techStackSection = this.formatTechStackSection(techStack);
+      
+      // Replace or insert Tech Stack section
+      const techStackRegex = /## Tech Stack[\s\S]*?(?=\n##|\n---|$)/;
+      const match = content.match(techStackRegex);
+      
+      if (match) {
+        content = content.replace(match[0], techStackSection);
+      } else {
+        // Insert after ## Overview
+        const overviewRegex = /## Overview[\s\S]*?(?=\n##|\n---|$)/;
+        const overviewMatch = content.match(overviewRegex);
+        if (overviewMatch) {
+          content = content.replace(
+            overviewMatch[0],
+            overviewMatch[0] + '\n\n' + techStackSection
+          );
+        } else {
+          content += '\n\n' + techStackSection;
+        }
+      }
+
+      // Update timestamp
+      content = this.generator['updateTimestamp'](content);
+
+      const filePath = path.join(this.config.ghostDir, 'architecture.md');
+      await fs.writeFile(filePath, content, 'utf-8');
+    } catch {
+      // Ignore errors - architecture file might not exist yet
+    }
+  }
+
+  private formatTechStackSection(techStack: TechStack): string {
+    const lines: string[] = [];
+    
+    lines.push('## Tech Stack\n');
+    
+    if (techStack.languages.length > 0) {
+      lines.push('### Languages');
+      lines.push('');
+      lines.push(techStack.languages.map((l: string) => `- ${l}`).join('\n'));
+      lines.push('');
+    }
+    
+    if (techStack.frameworks.length > 0) {
+      lines.push('### Frameworks');
+      lines.push('');
+      lines.push(techStack.frameworks.map((f: string) => `- ${f}`).join('\n'));
+      lines.push('');
+    }
+    
+    if (techStack.databases.length > 0) {
+      lines.push('### Databases');
+      lines.push('');
+      lines.push(techStack.databases.map((d: string) => `- ${d}`).join('\n'));
+      lines.push('');
+    }
+    
+    if (techStack.tools.length > 0) {
+      lines.push('### Key Tools');
+      lines.push('');
+      lines.push(techStack.tools.slice(0, 10).map((t: string) => `- ${t}`).join('\n'));
+      lines.push('');
+    }
+    
+    if (techStack.testing.length > 0) {
+      lines.push('### Testing');
+      lines.push('');
+      lines.push(techStack.testing.map((t: string) => `- ${t}`).join('\n'));
+      lines.push('');
+    }
+    
+    return lines.join('\n');
+  }
+
+  // ─── Git History Integration ───────────────────────────────────────────────
+
+  async extractGitDecisions(limit = 50): Promise<Result<ArchitecturalDecision[]>> {
+    try {
+      if (!(await this.gitHistoryAnalyzer.isGitRepo())) {
+        return ok([]);
+      }
+      
+      this.gitDecisions = await this.gitHistoryAnalyzer.extractDecisions(limit);
+      await this.updateDecisionsFromGitHistory();
+      
+      return ok(this.gitDecisions);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  async getGitDecisions(): Promise<ArchitecturalDecision[]> {
+    if (this.gitDecisions.length === 0) {
+      try {
+        await this.extractGitDecisions();
+      } catch {
+        return [];
+      }
+    }
+    return this.gitDecisions;
+  }
+
+  /**
+   * Update decisions.md with decisions extracted from git history
+   */
+  private async updateDecisionsFromGitHistory(): Promise<void> {
+    if (this.gitDecisions.length === 0) return;
+
+    try {
+      let content = await this.generator.readFile('decisions.md');
+
+      // Format git decisions
+      const gitDecisionsSection = this.formatGitDecisionsSection();
+      
+      // Find the Decision Log section
+      const logRegex = /## Decision Log[\s\S]*?(?=\n##|\n---|$)/;
+      const match = content.match(logRegex);
+      
+      if (match) {
+        // Append git decisions to the Decision Log
+        const newContent = match[0] + '\n' + gitDecisionsSection;
+        content = content.replace(match[0], newContent);
+      } else {
+        // Insert after ## Decision Log header if it exists
+        const headerRegex = /## Decision Log/;
+        const headerMatch = content.match(headerRegex);
+        if (headerMatch) {
+          const insertAt = headerMatch.index! + headerMatch[0].length;
+          content = content.slice(0, insertAt) + '\n\n' + gitDecisionsSection + '\n' + content.slice(insertAt);
+        } else {
+          // Insert before --- or at the end
+          const separatorRegex = /^---/m;
+          const separatorMatch = content.match(separatorRegex);
+          if (separatorMatch) {
+            const insertAt = separatorMatch.index!;
+            content = content.slice(0, insertAt) + '\n' + gitDecisionsSection + '\n\n' + content.slice(insertAt);
+          } else {
+            content += '\n\n' + gitDecisionsSection + '\n';
+          }
+        }
+      }
+
+      // Update timestamp
+      content = this.generator['updateTimestamp'](content);
+
+      const filePath = path.join(this.config.ghostDir, 'decisions.md');
+      await fs.writeFile(filePath, content, 'utf-8');
+    } catch {
+      // Ignore errors - decisions file might not exist yet
+    }
+  }
+
+  private formatGitDecisionsSection(): string {
+    if (this.gitDecisions.length === 0) return '';
+
+    const lines: string[] = [];
+    
+    // Sort by date (oldest first for ADR-style)
+    const sortedDecisions = [...this.gitDecisions].sort((a, b) => a.date.getTime() - b.date.getTime());
+    
+    for (const decision of sortedDecisions.slice(0, 20)) {
+      lines.push('');
+      lines.push(`### ${decision.title}`);
+      lines.push('');
+      lines.push(`**Date:** ${decision.date.toISOString().split('T')[0]}`);
+      lines.push(`**Status:** ${decision.status}`);
+      
+      if (decision.context) {
+        lines.push(`**Context:** ${decision.context}`);
+      }
+      
+      if (decision.decision) {
+        lines.push(`**Decision:** ${decision.decision}`);
+      }
+      
+      if (decision.rationale) {
+        lines.push(`**Rationale:** ${decision.rationale}`);
+      }
+      
+      lines.push('---');
+    }
+    
+    return lines.join('\n');
+  }
+
   // ─── Status ────────────────────────────────────────────────────────────────
 
   getStatus() {
@@ -232,6 +565,9 @@ export class MemoryEngine extends EventEmitter {
       watching: this.watcher?.isRunning() ?? false,
       config: this.config,
       recentContextCount: this.recentContexts.length,
+      techStack: this.techStack?.techStack,
+      hasGitDecisions: this.gitDecisions.length > 0,
+      gitDecisionsCount: this.gitDecisions.length,
     };
   }
 

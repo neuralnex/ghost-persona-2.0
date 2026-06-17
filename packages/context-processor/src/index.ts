@@ -54,12 +54,12 @@ const MIGRATION_PAIRS: Array<{ from: RegExp; to: RegExp; description: string }> 
 
 export class RuleBasedSummarizer implements Summarizer {
   async summarize(batch: FileChangeBatch): Promise<ProcessedContext> {
-    const created = batch.events.filter((e) => e.type === 'created');
-    const deleted = batch.events.filter((e) => e.type === 'deleted');
-    const modified = batch.events.filter((e) => e.type === 'modified');
-    const renamed = batch.events.filter((e) => e.type === 'renamed');
+    const created = batch.events.filter((e: FileChangeEvent) => e.type === 'created');
+    const deleted = batch.events.filter((e: FileChangeEvent) => e.type === 'deleted');
+    const modified = batch.events.filter((e: FileChangeEvent) => e.type === 'modified');
+    const renamed = batch.events.filter((e: FileChangeEvent) => e.type === 'renamed');
 
-    const allPaths = batch.events.map((e) => e.relativePath);
+    const allPaths = batch.events.map((e: FileChangeEvent) => e.relativePath);
     const affectedAreas = this.detectAreas(allPaths);
     const migration = this.detectMigration(created, deleted);
     const changeType = this.detectChangeCategory(batch.events, migration);
@@ -265,7 +265,7 @@ export class LLMSummarizer implements Summarizer {
   private readonly apiKey: string;
   private readonly model: string;
 
-  constructor(apiKey: string, model = 'gemini-1.5-flash') {
+  constructor(apiKey: string, model = 'gemini-2.5-flash') {
     this.apiKey = apiKey;
     this.model = model;
   }
@@ -306,7 +306,7 @@ export class LLMSummarizer implements Summarizer {
 
   private buildPrompt(batch: FileChangeBatch): string {
     const events = batch.events
-      .map((e) => {
+      .map((e: FileChangeEvent) => {
         if (e.type === 'renamed') return `RENAMED: ${e.oldPath} → ${e.relativePath}`;
         return `${e.type.toUpperCase()}: ${e.relativePath}`;
       })

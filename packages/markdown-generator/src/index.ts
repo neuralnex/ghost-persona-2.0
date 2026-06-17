@@ -327,7 +327,7 @@ Branch: ${snapshot.branch ?? 'unknown'}
 
 ## Recent Changes
 
-${snapshot.recentChanges.map((c) => `- ${c}`).join('\n') || '_No recent changes._'}
+${snapshot.recentChanges.map((c: string) => `- ${c}`).join('\n') || '_No recent changes._'}
 
 ## Current Goal
 
@@ -335,11 +335,11 @@ ${snapshot.currentGoal || '_Not specified._'}
 
 ## Known Issues
 
-${snapshot.knownIssues.map((i) => `- ${i}`).join('\n') || '_None recorded._'}
+${snapshot.knownIssues.map((i: string) => `- ${i}`).join('\n') || '_None recorded._'}
 
 ## Next Tasks
 
-${snapshot.nextTasks.map((t) => `- ${t}`).join('\n') || '_Not specified._'}
+${snapshot.nextTasks.map((t: string) => `- ${t}`).join('\n') || '_Not specified._'}
 
 ---
 _Snapshot ID: ${snapshot.id}_

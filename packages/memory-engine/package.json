@@ -14,6 +14,8 @@
     "@ghost-persona/context-processor": "*",
     "@ghost-persona/markdown-generator": "*",
     "@ghost-persona/encryption": "*",
+    "@ghost-persona/tech-stack-detector": "*",
+    "@ghost-persona/git-history": "*",
     "sql.js": "^1.12.0"
   },
   "devDependencies": {

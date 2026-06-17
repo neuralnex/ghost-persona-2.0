@@ -5,6 +5,7 @@ import { contextRoutes } from './routes/context.js';
 import { memoryRoutes } from './routes/memory.js';
 import { snapshotRoutes } from './routes/snapshots.js';
 import { healthRoutes } from './routes/health.js';
+import { searchRoutes } from './routes/search.js';
 
 export interface ApiServerOptions {
   projectRoot?: string;
@@ -53,20 +54,28 @@ export async function createServer(options: ApiServerOptions = {}) {
   await fastify.register(contextRoutes, { prefix: '/context' });
   await fastify.register(memoryRoutes, { prefix: '/memory' });
   await fastify.register(snapshotRoutes, { prefix: '/snapshots' });
+  await fastify.register(searchRoutes, { prefix: '/search' });
 
   // Root info
   fastify.get('/', async () => ({
     name: 'Ghost Persona API',
-    version: '0.1.0',
-    description: 'AI coding agent context API',
+    version: '0.3.0',
+    description: 'AI coding agent context API with semantic search',
     endpoints: {
       health: 'GET /health',
       brief: 'GET /context/brief',
-      search: 'GET /context/search?q=<query>',
+      briefMarkdown: 'GET /context/brief/markdown',
+      contextSearch: 'GET /context/search?q=<query>',
       memory: 'GET /memory/:file',
       memoryAll: 'GET /memory',
       snapshots: 'GET /snapshots',
       createSnapshot: 'POST /snapshots',
+      search: 'GET /search?q=<query>',
+      semanticSearch: 'GET /search/semantic?q=<query>&limit=&min_score=&type=',
+      query: 'GET /search/query?q=<natural-language-query>',
+      changesLastWeek: 'GET /changes/last-week',
+      changesYesterday: 'GET /changes/yesterday',
+      changesToday: 'GET /changes/today',
     },
     docs: 'https://github.com/ghost-persona/ghost-persona#api',
   }));

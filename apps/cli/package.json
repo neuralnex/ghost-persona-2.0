@@ -16,6 +16,8 @@
     "@ghost-persona/memory-engine": "*",
     "@ghost-persona/encryption": "*",
     "@ghost-persona/sync-manager": "*",
+    "@ghost-persona/tech-stack-detector": "*",
+    "@ghost-persona/git-history": "*",
     "commander": "^12.0.0",
     "chalk": "^5.3.0",
     "ora": "^8.0.1",

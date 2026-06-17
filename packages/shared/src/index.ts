@@ -12,6 +12,11 @@ export interface GhostConfig {
   encryptionEnabled: boolean;
   syncEnabled: boolean;
   apiPort: number;
+  // Search configuration
+  vectorSearchEnabled?: boolean;
+  qdrantUrl?: string;
+  embeddingApiKey?: string;
+  embeddingModel?: string;
 }
 
 export interface FileChangeEvent {

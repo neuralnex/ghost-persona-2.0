@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { RuleBasedSummarizer } from '../index.js';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { RuleBasedSummarizer, LLMSummarizer, createSummarizer } from '../index.js';
 import { FileChangeBatch, FileChangeEvent } from '@ghost-persona/shared';
 import { randomUUID } from 'crypto';
 
@@ -133,5 +133,131 @@ describe('RuleBasedSummarizer', () => {
 
     const result = await summarizer.summarize(batch);
     expect(result.changeType).toBe('testing');
+  });
+
+  describe('LLMSummarizer', () => {
+    let summarizer: LLMSummarizer;
+    const mockApiKey = 'test-api-key';
+    const mockModel = 'gemini-1.5-flash';
+
+    beforeEach(() => {
+      summarizer = new LLMSummarizer(mockApiKey, mockModel);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('has correct apiKey and model', () => {
+      expect((summarizer as unknown as { apiKey: string; model: string }).apiKey).toBe(mockApiKey);
+      expect((summarizer as unknown as { apiKey: string; model: string }).model).toBe(mockModel);
+    });
+
+    it('builds correct prompt for file changes', () => {
+      const batch = makeBatch([
+        { type: 'created', path: 'src/auth/clerk.ts' },
+        { type: 'deleted', path: 'src/auth/jwt.ts' },
+      ]);
+
+      const buildPrompt = (summarizer as unknown as { buildPrompt: (b: FileChangeBatch) => string }).buildPrompt;
+      const prompt = buildPrompt(batch);
+      
+      expect(prompt).toContain('FILE CHANGES:');
+      expect(prompt).toContain('CREATED: src/auth/clerk.ts');
+      expect(prompt).toContain('DELETED: src/auth/jwt.ts');
+      expect(prompt).toContain('title');
+      expect(prompt).toContain('summary');
+      expect(prompt).toContain('changeType');
+    });
+
+    it('falls back to rule-based on API error', async () => {
+      global.fetch = vi.fn(() => 
+        Promise.resolve({
+          ok: false,
+          statusText: 'Not Found',
+        } as Response)
+      ) as typeof fetch;
+
+      const batch = makeBatch([
+        { type: 'created', path: 'src/auth/clerk.ts' },
+        { type: 'deleted', path: 'src/auth/jwt.ts' },
+      ]);
+
+      const result = await summarizer.summarize(batch);
+      
+      expect(result).toBeDefined();
+      expect(result.timestamp).toBeInstanceOf(Date);
+    });
+
+    it('falls back to rule-based on malformed JSON response', async () => {
+      global.fetch = vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ candidates: [{ content: { parts: [{ text: 'not valid json' }] } }] }),
+        } as Response)
+      ) as typeof fetch;
+
+      const batch = makeBatch([
+        { type: 'created', path: 'src/auth/clerk.ts' },
+        { type: 'deleted', path: 'src/auth/jwt.ts' },
+      ]);
+
+      const result = await summarizer.summarize(batch);
+      
+      expect(result).toBeDefined();
+      expect(result.timestamp).toBeInstanceOf(Date);
+    });
+
+    it('handles successful API response with valid JSON', async () => {
+      const mockResponse = {
+        title: 'Authentication Migration',
+        summary: 'Switched from JWT to Clerk',
+        details: ['Removed JWT', 'Added Clerk'],
+        affectedAreas: ['Authentication'],
+        changeType: 'migration',
+      };
+
+      global.fetch = vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ 
+            candidates: [{ 
+              content: { 
+                parts: [{ text: JSON.stringify(mockResponse) }] 
+              } 
+            }] 
+          }),
+        } as Response)
+      ) as typeof fetch;
+
+      const batch = makeBatch([
+        { type: 'created', path: 'src/auth/clerk.ts' },
+        { type: 'deleted', path: 'src/auth/jwt.ts' },
+      ]);
+
+      const result = await summarizer.summarize(batch);
+      
+      expect(result.title).toBe(mockResponse.title);
+      expect(result.summary).toBe(mockResponse.summary);
+      expect(result.changeType).toBe(mockResponse.changeType);
+      expect(result.timestamp).toBeInstanceOf(Date);
+    });
+  });
+
+  describe('createSummarizer', () => {
+    it('returns RuleBasedSummarizer for rule-based mode', () => {
+      const summarizer = createSummarizer('rule-based');
+      expect(summarizer).toBeInstanceOf(RuleBasedSummarizer);
+    });
+
+    it('returns LLMSummarizer for llm mode with apiKey', () => {
+      const summarizer = createSummarizer('llm', 'test-key', 'gemini-1.5-flash');
+      expect(summarizer).toBeInstanceOf(LLMSummarizer);
+    });
+
+    it('returns RuleBasedSummarizer for llm mode without apiKey', () => {
+      const summarizer = createSummarizer('llm');
+      expect(summarizer).toBeInstanceOf(RuleBasedSummarizer);
+    });
   });
 });
