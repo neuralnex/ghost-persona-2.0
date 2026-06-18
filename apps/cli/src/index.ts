@@ -17,6 +17,9 @@ import { changesCommand } from './commands/changes.js';
 import { techStackCommand } from './commands/tech-stack.js';
 import { gitDecisionsCommand } from './commands/git-decisions.js';
 import { hooksCommand } from './commands/hooks.js';
+import { cloudPushCommand } from './commands/cloud-push.js';
+import { cloudPullCommand } from './commands/cloud-pull.js';
+import { cloudStatusCommand } from './commands/cloud-status.js';
 import chalk from 'chalk';
 
 const program = new Command();
@@ -47,5 +50,8 @@ program.addCommand(changesCommand());
 program.addCommand(techStackCommand());
 program.addCommand(gitDecisionsCommand());
 program.addCommand(hooksCommand());
+program.addCommand(cloudPushCommand());
+program.addCommand(cloudPullCommand());
+program.addCommand(cloudStatusCommand());
 
 program.parse(process.argv);

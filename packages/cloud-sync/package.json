@@ -1,0 +1,20 @@
+{
+  "name": "@ghost-persona/cloud-sync",
+  "version": "0.4.0",
+  "description": "Cloud synchronization for Ghost Persona memory files",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ghost-persona/shared": "0.3.0",
+    "@ghost-persona/encryption": "0.3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "type": "module"
+}
