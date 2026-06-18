@@ -1,0 +1,25 @@
+{
+  "name": "@ghost-persona/mcp-server",
+  "version": "0.5.0",
+  "description": "Model Context Protocol (MCP) server for Ghost Persona",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ghost-mcp": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "cli": "node dist/cli.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ghost-persona/shared": "0.3.0",
+    "@ghost-persona/memory-engine": "0.3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "type": "module"
+}

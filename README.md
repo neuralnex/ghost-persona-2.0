@@ -48,7 +48,15 @@ ghost-persona/
 │   ├── markdown-generator/  Creates and maintains all .ghost/*.md files
 │   ├── encryption/          AES-256-GCM vault encryption (PBKDF2 key derivation)
 │   ├── sync-manager/        Git-based vault sync and restore
-│   └── memory-engine/       Core orchestrator — ties everything together
+│   ├── memory-engine/       Core orchestrator — ties everything together
+│   ├── cloud-sync/          Cloud storage sync (non-Git) with team sharing
+│   ├── tech-stack-detector/ Auto-detect languages, frameworks, databases
+│   ├── git-history/         Extract decisions from git commit history
+│   ├── vector-search/        Qdrant vector search integration
+│   ├── semantic-search/      Semantic similarity search across memory files
+│   ├── natural-language-queries/ Natural language query processing
+│   ├── mcp-server/          Model Context Protocol server for AI agents
+│   └── cursor-rules/        Auto-generate .cursorrules and CLAUDE.md
 │
 ├── apps/
 │   ├── cli/                 ghost CLI (init, watch, brief, encrypt, sync…)
@@ -167,6 +175,10 @@ Paste this into any AI agent (Claude, Cursor, Aider, Windsurf, etc.) and it imme
 | `ghost tech-stack` | Detect and display project technology stack |
 | `ghost git-decisions` | Extract decisions from git commit history |
 | `ghost hooks` | Manage Git commit hooks for auto-tracking |
+| `ghost cloud-push` | Push memory to cloud storage (non-Git) |
+| `ghost cloud-pull` | Pull memory from cloud storage (non-Git) |
+| `ghost cloud-status` | Check cloud sync status |
+| `ghost generate-agent-files` | Generate .cursorrules and CLAUDE.md for AI agents |
 
 ### Examples
 
@@ -201,6 +213,41 @@ ghost git-decisions --limit 100
 
 # Manage git hooks for automatic tracking
 ghost hooks
+
+# v0.4 Features - Cloud Sync
+# Push memory to cloud storage
+ghost cloud-push --endpoint https://api.ghost-persona.com --api-key YOUR_KEY --project-id my-project
+
+# Pull memory from cloud storage
+ghost cloud-pull --endpoint https://api.ghost-persona.com --api-key YOUR_KEY --project-id my-project
+
+# Push with encryption
+ghost cloud-push --endpoint https://api.ghost-persona.com --api-key YOUR_KEY --encrypt --password my-secret
+
+# Pull with decryption
+ghost cloud-pull --endpoint https://api.ghost-persona.com --api-key YOUR_KEY --password my-secret
+
+# Check cloud sync status
+ghost cloud-status --endpoint https://api.ghost-persona.com --api-key YOUR_KEY
+
+# Team sharing
+ghost cloud-push --endpoint https://api.ghost-persona.com --api-key YOUR_KEY --team-id my-team
+
+# v0.5 Features - Agents
+# Generate AI agent configuration files
+ghost generate-agent-files --all
+
+# Generate only .cursorrules
+ghost generate-agent-files --cursorrules
+
+# Generate only CLAUDE.md
+ghost generate-agent-files --claude
+
+# Generate in a specific directory
+ghost generate-agent-files --all --output ./docs
+
+# Start MCP server (for Claude Code, Cursor, etc.)
+npx @ghost-persona/mcp-server --project-root /your/project
 ```
 
 ---
@@ -674,15 +721,15 @@ To enable semantic search (v0.3), you need to:
 
 ### v0.4 — Cloud
 
-- [ ] Cloud sync (non-Git option)
-- [ ] Team memory sharing
-- [ ] Web dashboard
+- [x] Cloud sync (non-Git option) — CLI commands: cloud-push, cloud-pull, cloud-status
+- [x] Team memory sharing — Support for teamId in cloud config
+- [ ] Web dashboard — UI for viewing and managing cloud memory
 
 ### v0.5 — Agents
 
-- [ ] MCP (Model Context Protocol) server
-- [ ] Cursor Rules auto-generation
-- [ ] `.cursorrules` / `CLAUDE.md` auto-update
+- [x] **MCP (Model Context Protocol) server** — Package: @ghost-persona/mcp-server with stdio transport
+- [x] **Cursor Rules auto-generation** — Package: @ghost-persona/cursor-rules generates .cursorrules from memory
+- [x] **`.cursorrules` / `CLAUDE.md` auto-update** — CLI command: ghost generate-agent-files
 
 ---
 
