@@ -351,8 +351,8 @@ class NLQueryProcessor {
     return this.processExplanationQuery(query);
   }
 
-  async search(query: string): Promise<Result<SemanticSearchResult>> {
-    return this.semanticSearch.search(query, { limit: 10 });
+  async search(query: string, options?: { limit?: number; minScore?: number; type?: string }): Promise<Result<SemanticSearchResult>> {
+    return this.semanticSearch.search(query, { limit: options?.limit || 10, minScore: options?.minScore, type: options?.type });
   }
 
   /**

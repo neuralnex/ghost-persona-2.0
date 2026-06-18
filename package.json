@@ -1,6 +1,6 @@
 {
   "name": "ghost-persona",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "description": "AI coding agent memory and context system",
   "workspaces": [
@@ -13,7 +13,7 @@
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:cli": "npm run dev --workspace=apps/cli",
     "lint": "eslint . --ext .ts,.tsx",
-    "build:packages": "npm run build --workspace=packages/shared && npm run build --workspace=packages/file-watcher && npm run build --workspace=packages/context-processor && npm run build --workspace=packages/markdown-generator && npm run build --workspace=packages/encryption && npm run build --workspace=packages/sync-manager && npm run build --workspace=packages/memory-engine && npm run build --workspace=packages/tech-stack-detector && npm run build --workspace=packages/git-history",
+    "build:packages": "npm run build --workspace=packages/shared && npm run build --workspace=packages/file-watcher && npm run build --workspace=packages/context-processor && npm run build --workspace=packages/markdown-generator && npm run build --workspace=packages/encryption && npm run build --workspace=packages/sync-manager && npm run build --workspace=packages/memory-engine && npm run build --workspace=packages/tech-stack-detector && npm run build --workspace=packages/git-history && npm run build --workspace=packages/vector-search && npm run build --workspace=packages/semantic-search && npm run build --workspace=packages/natural-language-queries",
     "build:apps": "npm run build --workspace=apps/api && npm run build --workspace=apps/cli && npm run build --workspace=apps/extension",
     "build:all": "npm run build:packages && npm run build:apps"
   },

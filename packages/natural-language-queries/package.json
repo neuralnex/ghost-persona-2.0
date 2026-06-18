@@ -1,6 +1,6 @@
 {
   "name": "@ghost-persona/natural-language-queries",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Natural language query processing for memory search (What changed last week?)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

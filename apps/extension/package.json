@@ -2,7 +2,7 @@
   "name": "ghost-persona",
   "displayName": "Ghost Persona",
   "description": "AI coding agent memory \u2014 continuous project context tracking",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "ghost-persona",
   "engines": {
     "vscode": "^1.85.0"

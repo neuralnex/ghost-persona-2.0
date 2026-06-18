@@ -91,7 +91,7 @@ export class MemoryEngine extends EventEmitter {
       this.store.upsertMetadata({
         initialized: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
-        version: '0.2.0',
+        version: '0.3.0',
         projectRoot: this.config.projectRoot,
       });
 

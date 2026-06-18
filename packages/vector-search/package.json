@@ -1,6 +1,6 @@
 {
   "name": "@ghost-persona/vector-search",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Vector search integration with Qdrant for semantic search across memory files",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

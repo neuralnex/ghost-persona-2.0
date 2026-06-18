@@ -1,6 +1,6 @@
 {
   "name": "@ghost-persona/cli",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Ghost Persona CLI \u2014 AI coding agent memory system",
   "bin": {
     "ghost": "dist/index.js"

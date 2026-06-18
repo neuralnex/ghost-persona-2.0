@@ -1,6 +1,6 @@
 {
   "name": "@ghost-persona/tech-stack-detector",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Auto-detect project technology stack from configuration files",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
