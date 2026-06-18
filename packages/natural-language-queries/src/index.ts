@@ -132,11 +132,13 @@ const TEMPORAL_PATTERNS: Array<{
 ];
 
 const DECISION_PATTERNS: RegExp[] = [
-  /why\s+(did|we|you|they)\s+choose/i,
-  /why\s+(was|is|were|are)\s+.*\s+chosen/i,
-  /what\s+(was|is)\s+the\s+decision\s+(about|on|regarding)/i,
-  /decision\s+(about|on|regarding)/i,
+  /why\s+(?:did\s+)?(?:we|you|they|)\s+choose/i,
+  /why\s+(?:did\s+)?(?:we|you|they|)\s+select/i,
+  /why\s+(?:was|is|were|are)\s+.*\s+chosen/i,
+  /what\s+(?:was|is)\s+the\s+decision\s+(?:about|on|regarding)/i,
+  /decision\s+(?:about|on|regarding)/i,
   /rational(e|le)\s+for/i,
+  /why\s+.*\s+decision/i,
 ];
 
 const EXPLANATION_PATTERNS: RegExp[] = [
@@ -151,10 +153,12 @@ const EXPLANATION_PATTERNS: RegExp[] = [
 class NLQueryProcessor {
   private semanticSearch: SemanticSearchService;
   private config: NLQueryConfig;
+  private enabledFlag: boolean;
 
   constructor(config: Partial<NLQueryConfig> = {}) {
     this.config = { ...{ useLLM: false }, ...config };
     this.semanticSearch = new SemanticSearchService(config);
+    this.enabledFlag = this.config.enabled ?? false;
   }
 
   /**
@@ -366,13 +370,14 @@ class NLQueryProcessor {
    * Check if NL queries are enabled
    */
   isEnabled(): boolean {
-    return this.semanticSearch.isEnabled();
+    return this.enabledFlag;
   }
 
   /**
    * Enable NL queries
    */
   enable(): void {
+    this.enabledFlag = true;
     this.semanticSearch.enable();
   }
 
@@ -380,6 +385,7 @@ class NLQueryProcessor {
    * Disable NL queries
    */
   disable(): void {
+    this.enabledFlag = false;
     this.semanticSearch.disable();
   }
 }

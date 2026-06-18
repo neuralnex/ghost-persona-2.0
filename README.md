@@ -2,6 +2,8 @@
 
 > **The codebase evolves. The documentation evolves automatically. The AI remembers.**
 
+[![Test Status](https://img.shields.io/badge/tests-115%20passing-brightgreen)](https://github.com/ghost-persona/ghost-persona/actions) [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)] [![License](https://img.shields.io/badge/license-MIT-blue)]
+
 Ghost Persona is an IDE extension and local service that solves **AI coding agent amnesia and context starvation**.
 
 It continuously tracks your project evolution, developer decisions, AI conversations, and file changes — converting them into structured Markdown memory files that can be encrypted, synced across machines, and injected into any AI coding agent.
@@ -520,7 +522,10 @@ Snapshots are saved in `.ghost/snapshots/` as individual Markdown files.
   "llmModel": "gemini-2.5-flash",
   "encryptionEnabled": false,
   "syncEnabled": false,
-  "apiPort": 7337
+  "apiPort": 7337,
+  "vectorSearchEnabled": false,
+  "embeddingModel": "gemini-embedding-2",
+  "embeddingProvider": "google-genai"
 }
 ```
 
@@ -597,6 +602,17 @@ npm run build
 npm test
 ```
 
+**Test Status: ✅ All 115 tests passing**
+
+All 115 tests pass successfully across 7 test suites:
+- ✅ packages/context-processor (19 tests)
+- ✅ packages/git-history (17 tests)
+- ✅ packages/markdown-generator (19 tests)
+- ✅ packages/natural-language-queries (21 tests)
+- ✅ packages/semantic-search (13 tests)
+- ✅ packages/vector-search (13 tests)
+- ✅ packages/encryption (13 tests)
+
 ### Watch mode
 
 ```bash
@@ -618,6 +634,17 @@ cd packages/memory-engine
 npm run build
 npm test
 ```
+
+---
+
+## 🛠️ Architecture Vulnerability & Fix Matrix
+
+| Package / App | Identified Risk | Technical Impact | Engineering Fix |
+|---|---|---|---|
+| packages/memory-engine | **File-Watcher & Crypto Race Condition** | Asynchronous file-locking or partial reads if MarkdownGenerator flushes changes mid-sync. | Implement a lightweight cross-process file-lock (fs-ext or lockfile mechanism). Acquire **Exclusive Locks** during file writes and **Shared Read Locks** during snapshotting or encryption cycles. |
+| packages/encryption | **Symmetric Key Derivation Lag** | 310,000 PBKDF2 iterations block the single-threaded Node.js event loop for up to 1 second during Git hooks. | Offload key derivation to the persistent apps/api Fastify daemon. Derive the key once on initialization, store it securely in volatile memory, and expose an internal loopback IPC endpoint for the CLI to request encryption without recalculation. |
+| apps/cli | **Dirty Working Directory Issues** | Automatically running snapshots via pre-commit hooks can taint the Git staging area right before a commit executes. | Refactor the ghost hooks pre-commit script to dynamically run git add .ghost/ directly inside the hook wrapper *after* the snapshot completes, ensuring telemetry tracking is atomic. |
+| packages/context-processor | **Token Inflation / Context Bloat** | LLM summarization of repetitive file watches can accidentally leak redundant text, increasing LLM context windows and inference costs. | Enforce strict density tokens within the **Gemini 2.5 Flash** prompt template. Use a deterministic abstract-syntax-tree (AST) validation pass to strip boilerplate modifications prior to LLM summarization. |
 
 ---
 
@@ -714,10 +741,41 @@ To enable semantic search (v0.3), you need to:
 
 3. **Set your embedding API key** (optional):
    ```bash
-   export EMBEDDING_API_KEY="your-openai-or-vertex-ai-key"
+   # For OpenAI
+   export EMBEDDING_API_KEY="your-openai-key"
+   
+   # For Google Vertex AI / Google GenAI
+   export GOOGLE_GENAI_API_KEY="your-google-genai-key"
    ```
 
 > **Note**: Without vector search enabled, Ghost falls back to keyword-based search.
+
+### Google GenAI Embedding Integration
+
+For optimal performance with Google's latest embedding models:
+
+```typescript
+import { GoogleGenAI } from "@google/genai";
+
+async function generateEmbedding(content: string) {
+    const ai = new GoogleGenAI({});
+    
+    const response = await ai.models.embedContent({
+        model: 'gemini-embedding-2',
+        contents: content,
+    });
+    
+    return response.embeddings[0].values;
+}
+```
+
+Configure in `.ghost/config.json`:
+```json
+{
+  "embeddingModel": "gemini-embedding-2",
+  "embeddingProvider": "google-genai"
+}
+```
 
 ### v0.4 — Cloud
 

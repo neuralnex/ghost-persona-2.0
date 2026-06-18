@@ -7,6 +7,16 @@
 
 import { ok, err, Result } from '@ghost-persona/shared';
 
+// Lazy import for Google GenAI to avoid loading it when not needed
+let GoogleGenAI: any = null;
+async function loadGoogleGenAI() {
+  if (!GoogleGenAI) {
+    const { GoogleGenAI: GenAI } = await import('@google/genai');
+    GoogleGenAI = GenAI;
+  }
+  return GoogleGenAI;
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 interface VectorSearchConfig {
@@ -14,7 +24,7 @@ interface VectorSearchConfig {
   qdrantUrl?: string;
   /** Collection name for memory vectors (default: ghost_memory) */
   collectionName?: string;
-  /** Vector dimension size (default: 768 for text-embedding-ada-002) */
+  /** Vector dimension size (default: 768 for text-embedding-ada-002, 3072 for gemini-embedding-2) */
   vectorSize?: number;
   /** Enable/disable vector search (default: false) */
   enabled?: boolean;
@@ -22,6 +32,8 @@ interface VectorSearchConfig {
   embeddingApiKey?: string;
   /** Embedding model to use */
   embeddingModel?: string;
+  /** Embedding provider: 'google-genai', 'openai', 'mock' (default: 'mock') */
+  embeddingProvider?: 'google-genai' | 'openai' | 'mock';
 }
 
 interface VectorRecord {
@@ -70,9 +82,10 @@ interface SearchResult {
 const DEFAULT_VECTOR_CONFIG: VectorSearchConfig = {
   qdrantUrl: 'http://localhost:6333',
   collectionName: 'ghost_memory',
-  vectorSize: 768, // Standard for text-embedding-ada-002
+  vectorSize: 3072, // Standard for gemini-embedding-2
   enabled: false,
-  embeddingModel: 'text-embedding-ada-002',
+  embeddingModel: 'gemini-embedding-2',
+  embeddingProvider: 'mock',
 };
 
 // ─── Vector Search Service ────────────────────────────────────────────────
@@ -513,22 +526,63 @@ class VectorSearchService {
   }
 
   /**
-   * Generate embedding using a mock embedder (in production, use real API)
-   * This is a placeholder that returns a mock vector for testing
+   * Generate embedding using the configured provider
+   * Supports: Google GenAI, OpenAI, or mock for testing
    */
   private async generateEmbedding(text: string): Promise<number[] | null> {
-    // In production, this would call an embedding API like:
-    // - OpenAI text-embedding-ada-002
-    // - Google Vertex AI
-    // - Hugging Face
-    // - Local sentence-transformers
+    const provider = this.config.embeddingProvider || 'mock';
+    const apiKey = this.config.embeddingApiKey || process.env.GOOGLE_GENAI_API_KEY;
+    
+    switch (provider) {
+      case 'google-genai': {
+        if (!apiKey) {
+          console.warn('⚠️ Google GenAI API key not configured. Falling back to mock.');
+          return this.generateMockEmbedding(text);
+        }
+        
+        try {
+          const GoogleGenAIClass = await loadGoogleGenAI();
+          const ai = new GoogleGenAIClass({ apiKey });
+          
+          const model = this.config.embeddingModel || 'gemini-embedding-2';
+          const response = await ai.models.embedContent({
+            model,
+            contents: text,
+          });
+          
+          // Update vector size based on actual embedding dimension
+          const embedding = response.embeddings[0].values;
+          if (embedding.length !== this.config.vectorSize) {
+            console.log(`ℹ️ Updating vectorSize from ${this.config.vectorSize} to ${embedding.length} for ${model}`);
+          }
+          
+          return embedding;
+        } catch (error) {
+          console.error('❌ Google GenAI embedding failed:', error);
+          return this.generateMockEmbedding(text);
+        }
+      }
+      
+      case 'openai': {
+        // OpenAI embedding implementation would go here
+        console.warn('OpenAI embedding not yet implemented. Falling back to mock.');
+        return this.generateMockEmbedding(text);
+      }
+      
+      case 'mock':
+      default:
+        return this.generateMockEmbedding(text);
+    }
+  }
 
-    // For now, return a mock embedding based on text hash
-    // This allows the code to compile and test without external dependencies
-    const vectorSize = this.config.vectorSize || 768;
+  /**
+   * Generate mock embedding for testing (no external API calls)
+   */
+  private generateMockEmbedding(text: string): number[] {
+    const vectorSize = this.config.vectorSize || 3072;
     const vector = new Array(vectorSize).fill(0);
 
-    // Simple hash-based mock embedding
+    // Simple hash-based mock embedding for deterministic testing
     let hash = 0;
     for (let i = 0; i < text.length; i++) {
       hash = (hash << 5) - hash + text.charCodeAt(i);

@@ -29,6 +29,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@google/genai": "^2.8.0",
     "@inquirer/prompts": "^8.5.2",
     "sql.js": "^1.14.1"
   }

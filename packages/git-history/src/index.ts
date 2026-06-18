@@ -63,7 +63,7 @@ export type CommitType =
 
 const DECISION_KEYWORDS = [
   // Migration keywords
-  { patterns: ['migrate', 'migration', 'switch', 'switching', 'move', 'moving'], type: 'migration' },
+  { patterns: ['migrate', 'migration', 'switch', 'switching', 'move', 'moving', 'revert', 'reverted'], type: 'migration' },
   { patterns: ['from .* to', 'replace .* with', 'upgrade .* to'], type: 'migration' },
   
   // Decision keywords

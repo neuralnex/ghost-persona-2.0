@@ -21,9 +21,10 @@ describe('VectorSearchService', () => {
     it('should have default configuration', () => {
       expect(DEFAULT_VECTOR_CONFIG.qdrantUrl).toBe('http://localhost:6333');
       expect(DEFAULT_VECTOR_CONFIG.collectionName).toBe('ghost_memory');
-      expect(DEFAULT_VECTOR_CONFIG.vectorSize).toBe(768);
+      expect(DEFAULT_VECTOR_CONFIG.vectorSize).toBe(3072);
       expect(DEFAULT_VECTOR_CONFIG.enabled).toBe(false);
-      expect(DEFAULT_VECTOR_CONFIG.embeddingModel).toBe('text-embedding-ada-002');
+      expect(DEFAULT_VECTOR_CONFIG.embeddingModel).toBe('gemini-embedding-2');
+      expect(DEFAULT_VECTOR_CONFIG.embeddingProvider).toBe('mock');
     });
 
     it('should be created via factory function', () => {
@@ -84,22 +85,68 @@ describe('VectorSearchService', () => {
   });
 
   describe('Embedding Generation', () => {
-    it('should generate mock embeddings of correct size', async () => {
+    it('should generate mock embeddings of correct size (default 3072)', async () => {
       service = new VectorSearchService({ 
-        enabled: true,
-        vectorSize: 768,
+        enabled: false, // Disabled to avoid Qdrant calls
+        embeddingProvider: 'mock',
+        vectorSize: 3072,
       });
       
-      // Access the private method through the class
-      // This tests the internal embedding generation
+      // Access the private method through the class instance
+      const generateEmbedding = (service as any).generateEmbedding.bind(service);
       const text = 'test content';
-      // We can't directly test private methods, but we can test through public methods
-      // that use embedding generation
+      const embedding = await generateEmbedding(text);
+      
+      expect(embedding).toBeDefined();
+      expect(embedding?.length).toBe(3072);
     });
 
     it('should generate deterministic embeddings for same text', async () => {
-      // This is tested indirectly through the service methods
-      expect(true).toBe(true); // Placeholder
+      service = new VectorSearchService({ 
+        enabled: false,
+        embeddingProvider: 'mock',
+        vectorSize: 128, // Smaller for faster testing
+      });
+      
+      const generateEmbedding = (service as any).generateEmbedding.bind(service);
+      const text = 'test content';
+      
+      const embedding1 = await generateEmbedding(text);
+      const embedding2 = await generateEmbedding(text);
+      
+      expect(embedding1).toEqual(embedding2);
+    });
+
+    it('should generate different embeddings for different text', async () => {
+      service = new VectorSearchService({ 
+        enabled: false,
+        embeddingProvider: 'mock',
+        vectorSize: 128,
+      });
+      
+      const generateEmbedding = (service as any).generateEmbedding.bind(service);
+      
+      const embedding1 = await generateEmbedding('text one');
+      const embedding2 = await generateEmbedding('text two');
+      
+      // At least first few values should differ
+      expect(embedding1?.slice(0, 5)).not.toEqual(embedding2?.slice(0, 5));
+    });
+
+    it('should fall back to mock when Google GenAI key not configured', async () => {
+      service = new VectorSearchService({ 
+        enabled: false,
+        embeddingProvider: 'google-genai',
+        vectorSize: 3072,
+        // No API key set
+      });
+      
+      const generateEmbedding = (service as any).generateEmbedding.bind(service);
+      const embedding = await generateEmbedding('test');
+      
+      // Should still return a mock embedding even without API key
+      expect(embedding).toBeDefined();
+      expect(embedding?.length).toBe(3072);
     });
   });
 
@@ -154,4 +201,34 @@ describe('createVectorSearch', () => {
     });
     expect(searchService).toBeInstanceOf(VectorSearchService);
   });
+});
+
+describe('Google GenAI Embedding (Live Test)', () => {
+  // Skip this test by default - only run when explicitly testing with live API
+  // To run: npm test -- --run packages/vector-search --reporter=verbose
+  const apiKey = process.env.GOOGLE_GENAI_API_KEY;
+  const shouldSkip = !apiKey;
+
+  it.skipIf(shouldSkip)('should generate real embedding with Google GenAI', async () => {
+    const service = new VectorSearchService({
+      enabled: false, // Disabled to avoid Qdrant calls
+      embeddingProvider: 'google-genai',
+      embeddingModel: 'gemini-embedding-2',
+      embeddingApiKey: apiKey,
+      vectorSize: 3072,
+    });
+
+    const generateEmbedding = (service as any).generateEmbedding.bind(service);
+    const text = 'Ghost Persona is a memory system';
+    
+    const embedding = await generateEmbedding(text);
+    
+    expect(embedding).toBeDefined();
+    expect(embedding?.length).toBe(3072);
+    expect(typeof embedding?.[0]).toBe('number');
+    
+    // Verify it's a real embedding (not all zeros)
+    const nonZeroValues = embedding?.filter(v => Math.abs(v) > 0.0001);
+    expect(nonZeroValues?.length).toBeGreaterThan(100);
+  }, 10000); // 10 second timeout for API call
 });

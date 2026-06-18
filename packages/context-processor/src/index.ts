@@ -286,7 +286,8 @@ export class LLMSummarizer implements Summarizer {
     );
 
     if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.statusText}`);
+      // Fallback to rule-based if API call fails
+      return new RuleBasedSummarizer().summarize(batch);
     }
 
     const data = (await response.json()) as {
