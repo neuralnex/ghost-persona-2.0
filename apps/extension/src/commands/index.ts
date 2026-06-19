@@ -5,6 +5,7 @@ import { GhostConfig, DEFAULT_CONFIG, GHOST_DIR } from '@ghost-persona/shared';
 import { GhostStatusBar } from '../providers/statusBar.js';
 import { MemoryTreeProvider } from '../providers/memoryTree.js';
 import path from 'path';
+import { needsChunking, calculateChecksum } from '../utils/ipc-chunking';
 
 interface CommandContext {
   context: vscode.ExtensionContext;
@@ -102,7 +103,25 @@ export function registerCommands(ctx: CommandContext): vscode.Disposable[] {
         async () => {
           const brief = await engine.generateBrief();
 
+          // Check if brief is too large for clipboard
+          // VS Code clipboard also has size limits, so warn user for very large briefs
+          const briefSizeKB = Buffer.byteLength(brief, 'utf-8') / 1024;
+          
+          if (briefSizeKB > 1024) {
+            // Brief is larger than 1MB - warn user
+            const choice = await vscode.window.showWarningMessage(
+              `👻 AI brief is large (${briefSizeKB.toFixed(1)}KB). Opening in editor.`,
+              { modal: false },
+              'Open Anyway'
+            );
+            
+            if (choice !== 'Open Anyway') {
+              return;
+            }
+          }
+
           // Open brief in new editor
+          // VS Code document API has its own limits, but handles large files better
           const doc = await vscode.workspace.openTextDocument({
             content: brief,
             language: 'markdown',
@@ -110,10 +129,16 @@ export function registerCommands(ctx: CommandContext): vscode.Disposable[] {
           await vscode.window.showTextDocument(doc);
 
           vscode.window.showInformationMessage(
-            '👻 AI brief generated — copy and paste into your agent',
+            `👻 AI brief generated (${briefSizeKB.toFixed(1)}KB) — copy and paste into your agent`,
             'Copy to Clipboard'
           ).then(async (choice) => {
             if (choice === 'Copy to Clipboard') {
+              // For very large briefs, show a warning
+              if (briefSizeKB > 512) {
+                vscode.window.showWarningMessage(
+                  `Brief is ${briefSizeKB.toFixed(1)}KB. Some clipboards may not support this size.`
+                );
+              }
               await vscode.env.clipboard.writeText(brief);
               vscode.window.setStatusBarMessage('$(check) Brief copied to clipboard', 3000);
             }

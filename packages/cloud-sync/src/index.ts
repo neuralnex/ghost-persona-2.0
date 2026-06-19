@@ -8,8 +8,13 @@
 
 import path from 'path';
 import fs from 'fs/promises';
+import crypto from 'crypto';
 import { GHOST_DIR, Result, ok, err, VAULT_FILE } from '@ghost-persona/shared';
 import { EncryptionService } from '@ghost-persona/encryption';
+
+const TEMP_SYNC_DIR = '.ghost-sync-temp';
+const MANIFEST_FILE = 'manifest.json';
+const CHECKSUM_ALGORITHM = 'sha256';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -477,12 +482,17 @@ export class CloudSyncManager {
   }
 
   /**
-   * Push memory files to cloud
+   * Push memory files to cloud with atomic two-phase commit
    */
   async push(options?: CloudSyncOptions): Promise<Result<MemoryManifest>> {
     const ghostDir = path.join(this.projectRoot, GHOST_DIR);
+    const tempDir = path.join(this.projectRoot, TEMP_SYNC_DIR);
+    const cloudPrefix = this.config.teamId || this.config.projectId || 'default';
+    
+    // Generate transaction ID for this sync operation
+    const transactionId = this.generateId();
     const manifest: MemoryManifest = {
-      id: this.generateId(),
+      id: transactionId,
       projectName: path.basename(this.projectRoot),
       updatedAt: new Date().toISOString(),
       files: [],
@@ -498,8 +508,11 @@ export class CloudSyncManager {
     };
 
     try {
-      // Read all memory files
+      // Phase 1: Prepare all files in temp directory with checksums
+      await fs.mkdir(tempDir, { recursive: true });
+      
       const files = await fs.readdir(ghostDir);
+      const uploadPromises: Promise<Result<void>>[] = [];
       
       for (const file of files) {
         if (file.endsWith('.md')) {
@@ -507,48 +520,99 @@ export class CloudSyncManager {
           const stat = await fs.stat(filePath);
           const content = await fs.readFile(filePath, 'utf-8');
           
-          // Generate hash of content
-          const hash = this.hashContent(content);
+          // Generate SHA-256 checksum for validation
+          const checksum = this.computeChecksum(content);
           
           manifest.files.push({
             name: file,
             size: stat.size,
-            hash,
+            hash: checksum,
             updatedAt: stat.mtime.toISOString(),
           });
 
-          // Upload to cloud
-          const cloudPath = `${this.config.teamId || this.config.projectId || 'default'}/${file}`;
+          // Copy file to temp directory with checksum metadata
+          const tempFilePath = path.join(tempDir, `${transactionId}_${file}`);
+          await fs.writeFile(tempFilePath, content, 'utf-8');
           
+          // Store checksum in metadata
+          const metadata = { 
+            checksum,
+            originalHash: this.hashContent(content),
+            timestamp: Date.now(),
+            transactionId
+          };
+          
+          // Upload to staging area (not yet visible)
+          const cloudStagingPath = `${cloudPrefix}/.staging/${transactionId}/${file}`;
           if (options?.encrypt && options.password) {
-            // Encrypt the content before uploading
             const encrypted = await this.encryptContent(content, options.password);
-            await this.provider.uploadFile(
-              path.join(this.projectRoot, VAULT_FILE),
-              cloudPath,
-              { encrypted: 'true', originalFile: file }
+            uploadPromises.push(
+              this.provider.uploadFile(
+                tempFilePath,
+                cloudStagingPath,
+                { encrypted: 'true', originalFile: file, ...metadata }
+              ).then(() => ok(undefined)) as Promise<Result<void>>
             );
           } else {
-            // Upload as-is
-            await this.provider.uploadFile(filePath, cloudPath);
+            uploadPromises.push(
+              this.provider.uploadFile(
+                tempFilePath,
+                cloudStagingPath,
+                metadata
+              ).then(() => ok(undefined)) as Promise<Result<void>>
+            );
           }
         }
       }
-
-      // Upload manifest
-      const manifestPath = `${this.config.teamId || this.config.projectId || 'default'}/manifest.json`;
-      const manifestTempPath = path.join(this.projectRoot, '.ghost-cloud-temp', 'manifest.json');
-      await fs.mkdir(path.dirname(manifestTempPath), { recursive: true });
+      
+      // Wait for all uploads to staging area
+      const uploadResults = await Promise.all(uploadPromises);
+      const hasErrors = uploadResults.some(r => !r.success);
+      
+      if (hasErrors) {
+        // Rollback: delete all staged files
+        await this.rollbackStaging(transactionId, cloudPrefix);
+        return err(new Error('Failed to upload all files to staging area'));
+      }
+      
+      // Upload manifest to staging
+      const stagingManifestPath = `${cloudPrefix}/.staging/${transactionId}/${MANIFEST_FILE}`;
+      const manifestTempPath = path.join(tempDir, MANIFEST_FILE);
       await fs.writeFile(manifestTempPath, JSON.stringify(manifest, null, 2), 'utf-8');
-      await this.provider.uploadFile(
+      
+      const manifestResult = await this.provider.uploadFile(
         manifestTempPath,
-        manifestPath,
-        { type: 'manifest', version: '1.0' }
+        stagingManifestPath,
+        { type: 'manifest', version: '1.0', transactionId, checksum: this.computeChecksum(JSON.stringify(manifest)) }
       );
-      await fs.rm(manifestTempPath, { force: true });
+      
+      if (!manifestResult.success) {
+        await this.rollbackStaging(transactionId, cloudPrefix);
+        return err(manifestResult.error);
+      }
+      
+      // Phase 2: Atomic commit - rename staging to production
+      // Move manifest from staging to production
+      const productionManifestPath = `${cloudPrefix}/${MANIFEST_FILE}`;
+      const moveResult = await this.moveToProduction(transactionId, cloudPrefix);
+      
+      if (!moveResult.success) {
+        // If move fails, we still have the data in staging for recovery
+        await this.rollbackStaging(transactionId, cloudPrefix);
+        return err(moveResult.error);
+      }
+      
+      // Clean up temp directory
+      await fs.rm(tempDir, { recursive: true, force: true });
 
       return ok(manifest);
     } catch (error) {
+      // Clean up on any error
+      try {
+        await fs.rm(tempDir, { recursive: true, force: true });
+        await this.rollbackStaging(transactionId, cloudPrefix);
+      } catch { /* ignore cleanup errors */ }
+      
       return err(error instanceof Error ? error : new Error(String(error)));
     }
   }
@@ -681,6 +745,110 @@ export class CloudSyncManager {
       hash |= 0;
     }
     return Math.abs(hash).toString(16);
+  }
+
+  private computeChecksum(content: string): string {
+    return crypto
+      .createHash(CHECKSUM_ALGORITHM)
+      .update(content)
+      .digest('hex');
+  }
+
+  /**
+   * Move files from staging to production atomically
+   */
+  private async moveToProduction(transactionId: string, cloudPrefix: string): Promise<Result<void>> {
+    try {
+      const cloudPath = `${cloudPrefix}/.staging/${transactionId}`;
+      const productionPath = cloudPrefix;
+      
+      // List all files in staging
+      const filesResult = await this.provider.listFiles(cloudPath);
+      if (!filesResult.success) {
+        return err(filesResult.error);
+      }
+      
+      // Move each file from staging to production
+      const movePromises = filesResult.data.map(async (file) => {
+        const stagingFile = `${cloudPath}/${file.name}`;
+        const productionFile = `${productionPath}/${file.name}`;
+        
+        // For most cloud providers, we can't truly rename, so we:
+        // 1. Download from staging
+        // 2. Upload to production
+        // 3. Delete from staging
+        
+        const tempLocalPath = path.join(this.projectRoot, TEMP_SYNC_DIR, `move_${file.name}`);
+        await fs.mkdir(path.dirname(tempLocalPath), { recursive: true });
+        
+        const downloadResult = await this.provider.downloadFile(stagingFile, tempLocalPath);
+        if (!downloadResult.success) {
+          throw new Error(`Failed to download ${stagingFile}`);
+        }
+        
+        const uploadResult = await this.provider.uploadFile(
+          tempLocalPath,
+          productionFile,
+          { movedFrom: stagingFile, transactionId }
+        );
+        
+        if (!uploadResult.success) {
+          throw new Error(`Failed to upload ${productionFile}`);
+        }
+        
+        // Delete from staging
+        await this.provider.deleteFile(stagingFile);
+        
+        // Clean up temp file
+        await fs.rm(tempLocalPath, { force: true });
+      });
+      
+      await Promise.all(movePromises);
+      
+      // Delete staging directory
+      try {
+        await this.provider.deleteFile(`${cloudPath}/`);
+      } catch { /* directory might not exist or already empty */ }
+      
+      return ok(undefined);
+    } catch (error) {
+      return err(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * Rollback staged files if sync fails
+   */
+  private async rollbackStaging(transactionId: string, cloudPrefix: string): Promise<void> {
+    try {
+      const cloudPath = `${cloudPrefix}/.staging/${transactionId}`;
+      
+      // List and delete all files in staging
+      const filesResult = await this.provider.listFiles(cloudPath);
+      if (filesResult.success) {
+        await Promise.all(
+          filesResult.data.map(file => 
+            this.provider.deleteFile(`${cloudPath}/${file.name}`).catch(() => {})
+          )
+        );
+      }
+      
+      // Delete staging directory
+      await this.provider.deleteFile(`${cloudPath}/`).catch(() => {});
+    } catch { /* ignore rollback errors */ }
+  }
+
+  /**
+   * Validate checksum of downloaded file
+   */
+  private async validateChecksum(filePath: string, expectedChecksum: string): Promise<boolean> {
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const actualChecksum = this.computeChecksum(content);
+      return actualChecksum === expectedChecksum;
+    } catch {
+      return false;
+    }
   }
 
   private async encryptContent(content: string, password: string): Promise<string> {

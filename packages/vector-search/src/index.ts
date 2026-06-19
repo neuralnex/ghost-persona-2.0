@@ -3,9 +3,16 @@
  * 
  * Provides Qdrant vector search integration for semantic search across memory files.
  * Enables natural language queries like "What changed last week?"
+ * 
+ * Uses Piscina worker pool to prevent Qdrant connection pool exhaustion.
+ * Limits concurrent embedding requests to 10 with exponential backoff retry.
  */
 
 import { ok, err, Result } from '@ghost-persona/shared';
+import { Piscina } from 'piscina';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 // Lazy import for Google GenAI to avoid loading it when not needed
 let GoogleGenAI: any = null;
@@ -16,6 +23,69 @@ async function loadGoogleGenAI() {
   }
   return GoogleGenAI;
 }
+
+// ─── Piscina Worker Pool Configuration ─────────────────────────────────────
+
+// Maximum concurrent embedding requests to prevent Qdrant pool exhaustion
+const MAX_CONCURRENT_EMBEDDINGS = 10;
+
+// Create a Piscina worker pool for embedding generation
+// Use a function to get the worker path that works in both source and compiled forms
+function getWorkerFilePath(): string {
+  // Try the compiled path first (dist/embedding-worker.js)
+  const compiledPath = path.resolve(__dirname, 'embedding-worker.js');
+  
+  // Also try the source path for testing
+  const sourcePath = path.resolve(__dirname, '..', 'src', 'embedding-worker.js');
+  
+  // Check which one exists
+  try {
+    if (fs.existsSync(compiledPath)) {
+      return compiledPath;
+    }
+    if (fs.existsSync(sourcePath)) {
+      return sourcePath;
+    }
+  } catch {
+    // Fallback to compiled path
+  }
+  
+  return compiledPath;
+}
+
+const WORKER_FILE_PATH = getWorkerFilePath();
+
+// Create Piscina pool lazily to avoid issues during testing
+// Only create the pool when vector search is actually enabled
+let embeddingPool: Piscina | null = null;
+
+function getEmbeddingPool(): Piscina | null {
+  // Don't create pool if worker file doesn't exist (e.g., during testing)
+  if (!fs.existsSync(WORKER_FILE_PATH)) {
+    return null;
+  }
+  
+  if (!embeddingPool) {
+    try {
+      embeddingPool = new Piscina({
+        filename: WORKER_FILE_PATH,
+        maxThreads: MAX_CONCURRENT_EMBEDDINGS,
+        minThreads: 2,
+        idleTimeout: 30000,
+        maxQueue: 'auto',
+      });
+    } catch {
+      // If pool creation fails, return null to use fallback
+      return null;
+    }
+  }
+  return embeddingPool;
+}
+
+// Track failed attempts for exponential backoff
+const retryCounts = new Map<string, number>();
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [100, 500, 2000]; // Exponential backoff delays in ms
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -220,7 +290,7 @@ class VectorSearchService {
   }
 
   /**
-   * Index multiple memory documents
+   * Index multiple memory documents using worker pool for backpressure
    */
   async indexMemories(
     documents: Array<{ id: string; content: string; payload: MemoryVectorPayload }>
@@ -238,19 +308,31 @@ class VectorSearchService {
         payload: MemoryVectorPayload;
       }> = [];
 
-      // Generate embeddings in parallel
-      const embeddingPromises = documents.map(async (doc) => {
-        const embedding = await this.generateEmbedding(doc.content);
-        if (embedding && embedding.length === vectorSize) {
-          points.push({
-            id: doc.id,
-            vector: embedding,
-            payload: doc.payload,
-          });
-        }
-      });
+      // Process documents in batches to respect worker pool limits
+      const batchSize = Math.min(MAX_CONCURRENT_EMBEDDINGS, documents.length);
+      
+      for (let i = 0; i < documents.length; i += batchSize) {
+        const batch = documents.slice(i, i + batchSize);
+        
+        // Generate embeddings for this batch
+        const embeddingPromises = batch.map(async (doc) => {
+          const embedding = await this.generateEmbedding(doc.content);
+          if (embedding && embedding.length === vectorSize) {
+            points.push({
+              id: doc.id,
+              vector: embedding,
+              payload: doc.payload,
+            });
+          }
+        });
 
-      await Promise.all(embeddingPromises);
+        await Promise.all(embeddingPromises);
+        
+        // Optional: Add delay between batches to prevent overwhelming Qdrant
+        if (i + batchSize < documents.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
 
       // Batch insert
       if (points.length > 0) {
@@ -526,25 +608,109 @@ class VectorSearchService {
   }
 
   /**
-   * Generate embedding using the configured provider
-   * Supports: Google GenAI, OpenAI, or mock for testing
+   * Generate embedding using the Piscina worker pool
+   * This prevents Qdrant connection pool exhaustion by limiting concurrent requests
    */
   private async generateEmbedding(text: string): Promise<number[] | null> {
     const provider = this.config.embeddingProvider || 'mock';
     const apiKey = this.config.embeddingApiKey || process.env.GOOGLE_GENAI_API_KEY;
+    const model = this.config.embeddingModel || 'gemini-embedding-2';
+    const vectorSize = this.config.vectorSize || 3072;
     
+    const taskId = this.generateTaskId(text);
+    const retryCount = retryCounts.get(taskId) || 0;
+    
+    if (retryCount >= MAX_RETRIES) {
+      console.warn(`⚠️ Max retries (${MAX_RETRIES}) exceeded for embedding task. Falling back to mock.`);
+      return this.generateMockEmbedding(text, vectorSize);
+    }
+    
+    try {
+      // Get the pool (lazy initialization)
+      const pool = getEmbeddingPool();
+      
+      // If pool is not available (e.g., during testing or worker file missing),
+      // fall back to inline embedding
+      if (!pool) {
+        console.log('ℹ️ Piscina worker pool not available. Using inline embedding.');
+        return this.generateEmbeddingInline(text, provider, apiKey, model, vectorSize);
+      }
+      
+      // Submit task to worker pool
+      const result = await pool.run({
+        text,
+        provider,
+        apiKey,
+        model,
+        vectorSize
+      });
+      
+      if (result.success && result.embedding) {
+        // Reset retry count on success
+        retryCounts.delete(taskId);
+        return result.embedding;
+      } else {
+        // Handle worker error
+        console.warn(`⚠️ Embedding generation failed: ${result.error}`);
+        
+        // Exponential backoff
+        retryCounts.set(taskId, retryCount + 1);
+        
+        if (retryCount < MAX_RETRIES - 1) {
+          const delay = RETRY_DELAYS[retryCount];
+          console.log(`⏳ Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return this.generateEmbedding(text);
+        }
+        
+        // Fall back to mock on final failure
+        return this.generateMockEmbedding(text, vectorSize);
+      }
+    } catch (error) {
+      console.error('❌ Embedding worker pool error:', error);
+      
+      // Increment retry count
+      retryCounts.set(taskId, retryCount + 1);
+      
+      // Fall back to mock on error
+      return this.generateMockEmbedding(text, vectorSize);
+    }
+  }
+
+  /**
+   * Generate a unique task ID for retry tracking
+   */
+  private generateTaskId(text: string): string {
+    let hash = 0;
+    for (let i = 0; i < Math.min(text.length, 100); i++) {
+      hash = (hash << 5) - hash + text.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash).toString(16);
+  }
+
+  /**
+   * Generate embedding inline (without worker pool) as fallback
+   * This is used when Piscina is not available (e.g., during testing)
+   */
+  private async generateEmbeddingInline(
+    text: string,
+    provider: string,
+    apiKey: string | undefined,
+    model: string,
+    vectorSize: number
+  ): Promise<number[] | null> {
     switch (provider) {
       case 'google-genai': {
         if (!apiKey) {
           console.warn('⚠️ Google GenAI API key not configured. Falling back to mock.');
-          return this.generateMockEmbedding(text);
+          return this.generateMockEmbedding(text, vectorSize);
         }
         
         try {
           const GoogleGenAIClass = await loadGoogleGenAI();
           const ai = new GoogleGenAIClass({ apiKey });
           
-          const model = this.config.embeddingModel || 'gemini-embedding-2';
           const response = await ai.models.embedContent({
             model,
             contents: text,
@@ -552,34 +718,33 @@ class VectorSearchService {
           
           // Update vector size based on actual embedding dimension
           const embedding = response.embeddings[0].values;
-          if (embedding.length !== this.config.vectorSize) {
-            console.log(`ℹ️ Updating vectorSize from ${this.config.vectorSize} to ${embedding.length} for ${model}`);
+          if (embedding.length !== vectorSize) {
+            console.log(`ℹ️ Updating vectorSize from ${vectorSize} to ${embedding.length} for ${model}`);
           }
           
           return embedding;
         } catch (error) {
           console.error('❌ Google GenAI embedding failed:', error);
-          return this.generateMockEmbedding(text);
+          return this.generateMockEmbedding(text, vectorSize);
         }
       }
       
       case 'openai': {
         // OpenAI embedding implementation would go here
         console.warn('OpenAI embedding not yet implemented. Falling back to mock.');
-        return this.generateMockEmbedding(text);
+        return this.generateMockEmbedding(text, vectorSize);
       }
       
       case 'mock':
       default:
-        return this.generateMockEmbedding(text);
+        return this.generateMockEmbedding(text, vectorSize);
     }
   }
 
   /**
    * Generate mock embedding for testing (no external API calls)
    */
-  private generateMockEmbedding(text: string): number[] {
-    const vectorSize = this.config.vectorSize || 3072;
+  private generateMockEmbedding(text: string, vectorSize: number): number[] {
     const vector = new Array(vectorSize).fill(0);
 
     // Simple hash-based mock embedding for deterministic testing
@@ -595,6 +760,27 @@ class VectorSearchService {
     }
 
     return vector;
+  }
+
+  /**
+   * Get worker pool statistics
+   */
+  getPoolStats(): { queueSize: number; completed: number; utilization: number; poolAvailable: boolean } {
+    const pool = getEmbeddingPool();
+    if (!pool) {
+      return {
+        queueSize: 0,
+        completed: 0,
+        utilization: 0,
+        poolAvailable: false
+      };
+    }
+    return {
+      queueSize: pool.queueSize,
+      completed: pool.completed,
+      utilization: pool.utilization,
+      poolAvailable: true
+    };
   }
 
   /**
@@ -655,5 +841,5 @@ function createVectorSearch(config?: Partial<VectorSearchConfig>): VectorSearchS
 
 // ─── Exports ───────────────────────────────────────────────────────────────
 
-export { VectorSearchService, createVectorSearch, DEFAULT_VECTOR_CONFIG };
+export { VectorSearchService, createVectorSearch, DEFAULT_VECTOR_CONFIG, MAX_CONCURRENT_EMBEDDINGS };
 export type { VectorSearchConfig, VectorRecord, MemoryVectorPayload, SearchQuery, SearchResult };

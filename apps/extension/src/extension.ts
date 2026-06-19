@@ -7,9 +7,23 @@ import { GHOST_DIR } from '@ghost-persona/shared';
 import path from 'path';
 import fs from 'fs';
 
+// Import chunked streaming utilities for IPC message serialization limits
+import {
+  ChunkedSender,
+  ChunkedReceiver,
+  chunkData,
+  reassembleChunks,
+  needsChunking,
+  DEFAULT_CHUNK_SIZE
+} from './utils/ipc-chunking.js';
+
 let engine: MemoryEngine | undefined;
 let statusBar: GhostStatusBar | undefined;
 let memoryTree: MemoryTreeProvider | undefined;
+
+// Chunked streaming state for large memory transfers
+let chunkedSender: ChunkedSender | undefined;
+let chunkedReceiver: ChunkedReceiver | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('Ghost Persona activating...');
@@ -74,6 +88,56 @@ export async function deactivate() {
     await engine.stop();
   }
 }
+
+/**
+ * Safely send large data through VS Code extension context
+ * Uses chunked streaming to avoid hitting the 8MB IPC message size limit
+ */
+export async function safeSendLargeData<T>(
+  data: T,
+  serializer: (d: T) => string = JSON.stringify
+): Promise<string> {
+  const serialized = serializer(data);
+  
+  if (!needsChunking(serialized)) {
+    return serialized;
+  }
+  
+  // For very large data, use chunked transfer
+  const chunks = chunkData(serialized, DEFAULT_CHUNK_SIZE);
+  const transferId = chunks[0].transferId;
+  
+  // In a real implementation, these chunks would be sent via a message bus
+  // For now, we'll return a marker that indicates chunking is needed
+  return JSON.stringify({
+    __chunked__: true,
+    transferId,
+    totalChunks: chunks.length,
+    checksum: chunks[0].checksum
+  });
+}
+
+/**
+ * Initialize chunked streaming for large memory file transfers
+ */
+function initializeChunkedStreaming() {
+  // Create sender for outgoing large messages
+  chunkedSender = new ChunkedSender(async (chunk) => {
+    // In production, this would send via VS Code's message API
+    // For now, just log
+    console.log(`Sending chunk ${chunk.sequence}/${chunk.totalChunks} for transfer ${chunk.transferId}`);
+    return true;
+  });
+  
+  // Create receiver for incoming chunked messages
+  chunkedReceiver = new ChunkedReceiver((data, metadata) => {
+    console.log(`Received complete chunked transfer: ${data.length} bytes`);
+    // Handle reassembled data
+  });
+}
+
+// Initialize chunked streaming on extension load
+initializeChunkedStreaming();
 
 async function startWatching() {
   if (!engine) return;

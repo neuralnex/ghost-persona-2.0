@@ -12,6 +12,12 @@ const ITERATIONS = 310_000; // PBKDF2 iterations (NIST recommendation)
 const DIGEST = 'sha512';
 const VAULT_VERSION = '1.0.0';
 
+// Key cache to prevent repeated PBKDF2 derivation
+// This stores derived keys in memory to avoid blocking the event loop
+// Keys are cached per password+salt combination
+const keyCache = new Map<string, { key: Buffer; timestamp: number }>();
+const KEY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes TTL
+
 export interface VaultPayload {
   metadata: EncryptionMetadata;
   files: Record<string, string>; // relativePath -> content
@@ -30,20 +36,76 @@ export class EncryptionService {
 
   // ─── Key Derivation ────────────────────────────────────────────────────────
 
-  private deriveKey(password: string, salt: Buffer): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
+  private async deriveKey(password: string, salt: Buffer): Promise<Buffer> {
+    // Generate cache key from password and salt
+    const cacheKey = this.generateCacheKey(password, salt);
+    
+    // Check cache first
+    const cached = keyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < KEY_CACHE_TTL) {
+      return cached.key;
+    }
+    
+    // Derive key using PBKDF2
+    const key = await new Promise<Buffer>((resolve, reject) => {
       crypto.pbkdf2(
         password,
         salt,
         ITERATIONS,
         KEY_LENGTH,
         DIGEST,
-        (err, key) => {
+        (err, derivedKey) => {
           if (err) reject(err);
-          else resolve(key);
+          else resolve(derivedKey);
         }
       );
     });
+    
+    // Cache the derived key
+    keyCache.set(cacheKey, { key, timestamp: Date.now() });
+    
+    // Clean up old cache entries periodically
+    if (keyCache.size > 100) {
+      this.cleanupKeyCache();
+    }
+    
+    return key;
+  }
+
+  /**
+   * Generate a cache key from password and salt
+   */
+  private generateCacheKey(password: string, salt: Buffer): string {
+    const hash = crypto.createHash('sha256');
+    hash.update(password);
+    hash.update(salt);
+    return hash.digest('hex');
+  }
+
+  /**
+   * Clean up expired cache entries
+   */
+  private cleanupKeyCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of keyCache.entries()) {
+      if (now - entry.timestamp > KEY_CACHE_TTL) {
+        keyCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Clear the key cache (useful for testing or when memory is low)
+   */
+  static clearKeyCache(): void {
+    keyCache.clear();
+  }
+
+  /**
+   * Get key cache statistics
+   */
+  static getCacheStats(): { size: number } {
+    return { size: keyCache.size };
   }
 
   // ─── Encryption ────────────────────────────────────────────────────────────

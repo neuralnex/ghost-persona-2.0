@@ -10,7 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ghost-persona/shared": "*"
+    "@ghost-persona/shared": "*",
+    "piscina": "^4.7.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
