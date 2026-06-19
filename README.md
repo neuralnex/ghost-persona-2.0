@@ -637,23 +637,7 @@ npm test
 
 ---
 
-## 🛠️ Architecture Vulnerability & Fix Matrix
 
-✅ **All vulnerabilities have been fixed!**
-
-| Package / App | Identified Risk | Technical Impact | Engineering Fix | Status |
-|---|---|---|---|---|
-| packages/memory-engine | **File-Watcher & Crypto Race Condition** | Asynchronous file-locking or partial reads if MarkdownGenerator flushes changes mid-sync. | Implemented lightweight cross-process file-lock mechanism with Exclusive Locks during file writes and Shared Read Locks during snapshotting or encryption cycles. | ✅ Fixed |
-| packages/encryption | **Symmetric Key Derivation Lag** | 310,000 PBKDF2 iterations block the single-threaded Node.js event loop for up to 1 second during Git hooks. | Implemented PBKDF2 key caching with SHA-256 cache keys and 5-minute TTL to prevent repeated key derivation. | ✅ Fixed |
-| apps/cli | **Dirty Working Directory Issues** | Automatically running snapshots via pre-commit hooks can taint the Git staging area right before a commit executes. | Refactored ghost hooks pre-commit script to dynamically run git add .ghost/ after snapshot completes, ensuring atomic telemetry tracking. | ✅ Fixed |
-| packages/context-processor | **Token Inflation / Context Bloat** | LLM summarization of repetitive file watches can accidentally leak redundant text, increasing LLM context windows and inference costs. | Implemented strict density tokens in Gemini 2.5 Flash prompt template with deterministic AST validation pass to strip boilerplate modifications. | ✅ Fixed |
-| packages/file-watcher | **Event Storm / Throttling Gap** | Chokidar can emit thousands of rapid file change events during bulk operations, causing cascading MarkdownGenerator writes and CPU spikes. | Implemented debounced event batching with 500ms coalescing window and circuit breaker pattern that pauses watching after 100 consecutive events. | ✅ Fixed |
-| packages/vector-search | **Qdrant Connection Pool Exhaustion** | Unbounded concurrent semantic search requests can exhaust the Qdrant connection pool, causing 503 errors under load. | Implemented Piscina worker pool with max 10 concurrent threads, backpressure, and exponential backoff retry (100ms, 500ms, 2000ms). | ✅ Fixed |
-| packages/cloud-sync | **Partial Sync State Inconsistency** | Network interruptions during cloud sync can leave memory files in a half-encrypted state, corrupting the local vault. | Implemented atomic two-phase commit with temporary staging directory, atomic rename operations, and SHA-256 checksum validation on all transferred files. | ✅ Fixed |
-| apps/api | **Unauthorized Memory Access** | The Fastify API exposes memory file endpoints without request origin validation, allowing cross-project data leaks via loopback. | Implemented JWT-signed project tokens with audience claims. Added preHandler hooks on all protected routes (/context, /memory, /snapshots). | ✅ Fixed |
-| apps/extension | **IPC Message Serialization Limits** | VS Code extension IPC has an 8MB message size limit; large memory snapshots cause extension host crashes. | Implemented chunked streaming utility with 1MB chunks, SHA-256 checksums, and sequence numbers. Added warnings for large briefs (>1MB) and clipboard size limits. | ✅ Fixed |
-
----
 
 ## Roadmap
 
