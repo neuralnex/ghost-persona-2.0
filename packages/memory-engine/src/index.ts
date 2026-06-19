@@ -25,6 +25,7 @@ import { GitHistoryAnalyzer, extractGitDecisions, CommitAnalysis } from '@ghost-
 import { NLQueryProcessor } from '@ghost-persona/natural-language-queries';
 import { SemanticSearchResult } from '@ghost-persona/semantic-search';
 import { randomUUID } from 'crypto';
+import { FileLockManager, createLockManager } from './file-lock.js';
 
 export interface MemoryEngineEvents {
   'initialized': () => void;
@@ -47,10 +48,12 @@ export class MemoryEngine extends EventEmitter {
   private gitDecisions: ArchitecturalDecision[] = [];
   private initialized = false;
   private recentContexts: ProcessedContext[] = [];
+  private lockManager: FileLockManager;
 
   constructor(config: GhostConfig) {
     super();
     this.config = config;
+    this.lockManager = createLockManager(config.projectRoot);
     
     // Support environment variables for API key (GHOST_LLM_API_KEY or GEMINI_API_KEY)
     const apiKey = process.env.GHOST_LLM_API_KEY 
@@ -81,6 +84,9 @@ export class MemoryEngine extends EventEmitter {
   async initialize(): Promise<Result<void>> {
     try {
       const ghostDir = path.join(this.config.projectRoot, GHOST_DIR);
+
+      // Initialize file lock manager to prevent race conditions
+      await this.lockManager.initialize();
 
       await this.generator.initialize();
 
@@ -165,12 +171,30 @@ export class MemoryEngine extends EventEmitter {
       this.store.close();
       this.store = null;
     }
+    // Clean up any locks held by this engine
+    await this.lockManager.cleanup();
   }
 
   // ─── Batch Processing ──────────────────────────────────────────────────────
 
   private async processBatch(batch: FileChangeBatch): Promise<void> {
+    const ghostDir = this.config.ghostDir;
+    
     try {
+      // Acquire exclusive lock on ghost directory to prevent race conditions
+      // with MarkdownGenerator flushes and encryption cycles
+      const lockAcquired = await this.lockManager.acquireExclusive(ghostDir, 5000);
+      
+      if (!lockAcquired) {
+        console.warn('Failed to acquire lock on ghost directory. Retrying with shared lock...');
+        // Try with shared lock for read operations
+        const sharedLockAcquired = await this.lockManager.acquireShared(ghostDir, 2000);
+        if (!sharedLockAcquired) {
+          this.emit('error', new Error('Failed to acquire any lock on ghost directory after timeout'));
+          return;
+        }
+      }
+
       const context = await this.summarizer.summarize(batch);
       batch.summary = context.summary;
 
@@ -190,6 +214,10 @@ export class MemoryEngine extends EventEmitter {
       this.emit('batch-processed', context);
     } catch (error) {
       this.emit('error', error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      // Release the lock
+      await this.lockManager.releaseExclusive(this.config.ghostDir);
+      await this.lockManager.releaseShared(this.config.ghostDir);
     }
   }
 
@@ -202,7 +230,16 @@ export class MemoryEngine extends EventEmitter {
     knownIssues?: string[];
     nextTasks?: string[];
   }): Promise<Result<ProjectSnapshot>> {
+    const ghostDir = this.config.ghostDir;
+    
     try {
+      // Acquire exclusive lock on ghost directory for snapshot creation
+      const lockAcquired = await this.lockManager.acquireExclusive(ghostDir, 5000);
+      
+      if (!lockAcquired) {
+        return err(new Error('Failed to acquire lock on ghost directory for snapshot creation'));
+      }
+
       const memorySnapshot = await this.generator.readAllMemory();
       const recentChanges = this.recentContexts
         .slice(0, 10)
@@ -228,6 +265,9 @@ export class MemoryEngine extends EventEmitter {
       return ok(snapshot);
     } catch (error) {
       return err(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      // Release the lock
+      await this.lockManager.releaseExclusive(this.config.ghostDir);
     }
   }
 

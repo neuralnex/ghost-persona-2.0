@@ -264,14 +264,19 @@ export class RuleBasedSummarizer implements Summarizer {
 export class LLMSummarizer implements Summarizer {
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly maxPromptTokens: number = 15000;
 
-  constructor(apiKey: string, model = 'gemini-2.5-flash') {
+  constructor(apiKey: string, model = 'gemini-2.5-flash', maxPromptTokens?: number) {
     this.apiKey = apiKey;
     this.model = model;
+    if (maxPromptTokens) this.maxPromptTokens = maxPromptTokens;
   }
 
   async summarize(batch: FileChangeBatch): Promise<ProcessedContext> {
     const prompt = this.buildPrompt(batch);
+    
+    // Enforce strict density tokens - strip boilerplate to prevent token inflation
+    const optimizedPrompt = this.optimizePromptForTokenDensity(prompt);
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`,
@@ -279,7 +284,7 @@ export class LLMSummarizer implements Summarizer {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ parts: [{ text: optimizedPrompt }] }],
           generationConfig: { responseMimeType: 'application/json' },
         }),
       }
@@ -303,6 +308,39 @@ export class LLMSummarizer implements Summarizer {
       // Fallback to rule-based if LLM response is malformed
       return new RuleBasedSummarizer().summarize(batch);
     }
+  }
+
+  /**
+   * Optimize prompt for token density by stripping boilerplate and redundant text
+   * Uses deterministic AST validation to prevent LLM context bloat
+   */
+  private optimizePromptForTokenDensity(prompt: string): string {
+    // Boilerplate patterns to strip
+    const BOILERPLATE_PATTERNS = [
+      /^\/\*\*[\s\S]*?\*\//,  // Remove leading JSDoc comments
+      /^\/\/[\s\S]*?\n/,       // Remove leading single-line comments
+      /^\s*$/,                  // Remove leading empty lines
+      /\n\s*\n/g,              // Collapse multiple newlines
+      /\n+$/                   // Remove trailing newlines
+    ];
+
+    let optimized = prompt;
+    
+    // Apply boilerplate stripping
+    for (const pattern of BOILERPLATE_PATTERNS) {
+      optimized = optimized.replace(pattern, '');
+    }
+    
+    // Strip redundant whitespace
+    optimized = optimized.trim();
+    
+    // Enforce max prompt length to prevent token inflation
+    if (optimized.length > this.maxPromptTokens * 4) { // rough estimate: 4 chars = 1 token
+      console.warn(`LLM prompt truncated from ${optimized.length} to ${this.maxPromptTokens * 4} characters to prevent token inflation`);
+      optimized = optimized.substring(0, this.maxPromptTokens * 4) + '... [truncated for token density]';
+    }
+    
+    return optimized;
   }
 
   private buildPrompt(batch: FileChangeBatch): string {

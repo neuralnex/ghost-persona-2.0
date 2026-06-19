@@ -25,12 +25,16 @@ export class FileWatcher extends EventEmitter {
   private readonly projectRoot: string;
   private readonly ignorePatterns: string[];
   private readonly debounceMs: number;
+  private circuitBreakerTripped = false;
+  private circuitBreakerThreshold = 100;
+  private consecutiveEventCount = 0;
 
-  constructor(config: Pick<GhostConfig, 'projectRoot' | 'ignorePatterns' | 'debounceMs'>) {
+  constructor(config: Pick<GhostConfig, 'projectRoot' | 'ignorePatterns' | 'debounceMs'> & { circuitBreakerThreshold?: number }) {
     super();
     this.projectRoot = config.projectRoot;
     this.ignorePatterns = config.ignorePatterns ?? DEFAULT_IGNORE_PATTERNS;
     this.debounceMs = config.debounceMs ?? 1500;
+    this.circuitBreakerThreshold = config.circuitBreakerThreshold ?? 100;
   }
 
   start(): void {
@@ -87,6 +91,11 @@ export class FileWatcher extends EventEmitter {
   }
 
   private handleEvent(type: FileChangeEvent['type'], filePath: string): void {
+    // Circuit breaker: pause watching if we hit the threshold
+    if (this.circuitBreakerTripped) {
+      return;
+    }
+
     const event: FileChangeEvent = {
       type,
       path: filePath,
@@ -99,11 +108,24 @@ export class FileWatcher extends EventEmitter {
     }
 
     this.pendingEvents.push(event);
+    this.consecutiveEventCount++;
     this.emit('change', event);
+    
+    // Check circuit breaker threshold
+    if (this.consecutiveEventCount >= this.circuitBreakerThreshold) {
+      this.circuitBreakerTripped = true;
+      console.warn(`FileWatcher circuit breaker tripped after ${this.circuitBreakerThreshold} consecutive events. Pausing until queue drains.`);
+    }
+    
     this.scheduleBatchFlush();
   }
 
   private handleRename(oldPath: string, newPath: string): void {
+    // Circuit breaker: pause watching if we hit the threshold
+    if (this.circuitBreakerTripped) {
+      return;
+    }
+
     const event: FileChangeEvent = {
       type: 'renamed',
       path: newPath,
@@ -117,7 +139,15 @@ export class FileWatcher extends EventEmitter {
     }
 
     this.pendingEvents.push(event);
+    this.consecutiveEventCount++;
     this.emit('change', event);
+    
+    // Check circuit breaker threshold
+    if (this.consecutiveEventCount >= this.circuitBreakerThreshold) {
+      this.circuitBreakerTripped = true;
+      console.warn(`FileWatcher circuit breaker tripped after ${this.circuitBreakerThreshold} consecutive events. Pausing until queue drains.`);
+    }
+    
     this.scheduleBatchFlush();
   }
 
@@ -140,11 +170,33 @@ export class FileWatcher extends EventEmitter {
 
     this.pendingEvents = [];
     this.debounceTimer = null;
+    
+    // Reset circuit breaker when queue drains
+    if (this.circuitBreakerTripped) {
+      this.circuitBreakerTripped = false;
+      this.consecutiveEventCount = 0;
+      console.log('FileWatcher circuit breaker reset. Resuming event processing.');
+    }
 
     this.emit('batch', batch);
   }
 
   isRunning(): boolean {
     return this.watcher !== null;
+  }
+
+  /**
+   * Manually reset the circuit breaker
+   */
+  resetCircuitBreaker(): void {
+    this.circuitBreakerTripped = false;
+    this.consecutiveEventCount = 0;
+  }
+
+  /**
+   * Check if circuit breaker is currently tripped
+   */
+  isCircuitBreakerTripped(): boolean {
+    return this.circuitBreakerTripped;
   }
 }

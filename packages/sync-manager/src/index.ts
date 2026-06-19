@@ -311,7 +311,7 @@ if [ -z "$STAGED_FILES" ]; then
 fi
 
 # Skip snapshot for certain file types
-SKIP_PATTERNS=".ghost|node_modules|dist|build|.next|coverage|*.lock|*.log|*.md"
+SKIP_PATTERNS="node_modules|dist|build|.next|coverage|*.lock|*.log"
 SHOULD_SKIP=false
 
 for pattern in $SKIP_PATTERNS; do
@@ -334,7 +334,7 @@ echo "Creating Ghost Persona snapshot..."
 # Create snapshot with commit message as goal
 COMMIT_MSG=$(git log -1 --pretty=%B 2>/dev/null || echo "Active development")
 
-# Use node to run ghost snapshot
+# Use node to run ghost snapshot and stage .ghost directory atomically
 node -e "
 const { execSync } = require('child_process');
 const projectRoot = process.env.GHOST_PROJECT_ROOT || process.cwd();
@@ -352,6 +352,10 @@ try {
 }
 " --GHOST_PROJECT_ROOT="$PROJECT_ROOT" --GHOST_CLI="$GHOST_CLI" --COMMIT_MSG="$COMMIT_MSG"
 
+
+# Atomically stage .ghost/ directory after snapshot completes
+# This ensures telemetry tracking is atomic with the commit
+git add .ghost/ 2>/dev/null || true
 exit 0
 `;
   }
